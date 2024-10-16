@@ -175,7 +175,7 @@ class ProcessCameraEvents extends IPSModule {
             $dateTime_id = $this->manageVariable($event_descriptionvar_id, "Date and Time", 3, '~TextBox', true, 0, "");
             SetValueString($dateTime_id, $motionData['dateTime']);
             SetValueBoolean($kameraId, true);
-            $kamera_IP_var_id = $this->manageVariable($kameraId, $motionData['ipAddress'], 3, '~TextBox', true, 0, "");      
+            $kamera_IP_var_id = $this->manageVariable($kameraId, "IP-".$motionData['ipAddress'], 3, '~TextBox', true, 0, "");      
             SetValueString($kamera_IP_var_id,$motionData['ipAddress']);
 
             $this->handle_egg_timer($source,$kamera_name,$kameraId);
