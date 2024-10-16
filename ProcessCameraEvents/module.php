@@ -331,9 +331,9 @@ class ProcessCameraEvents extends IPSModule {
     private function ExecuteMotionDetectionAPI($status)
     {
         
-        $username = $this->ReadPropertyString('UserName');
-        $password = $this->ReadPropertyString('Password');
-        $subnet   = $this->ReadPropertyString('Subnet');
+        //$username = $this->ReadPropertyString('UserName');
+        //$password = $this->ReadPropertyString('Password');
+        $subnet   = "IP-".$this->ReadPropertyString('Subnet');
         // Convert search terms to an array in case multiple terms are provided
         //$searchTerms = explode(",", $this->ReadPropertyString("SearchTerms"));
         $searchTerms = array($subnet);
@@ -372,6 +372,9 @@ class ProcessCameraEvents extends IPSModule {
         // Iterate over the filtered IP variables
         foreach ($filteredObjects as $ipVarId) {
             $ip = GetValueString($ipVarId);
+            $parent = IPS_GetParent ($ipVarId);
+            $username = IPS_GetObjectIDByName ("User Name",$parent );
+            $password = IPS_GetObjectIDByName ("Password",$parent );
             IPS_LogMessage("CameraMotionDetectionModule", "Processing IP: $ip");
 
             foreach ($pathArray as $path) {
