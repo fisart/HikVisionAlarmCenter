@@ -9,6 +9,7 @@ class ProcessCameraEvents extends IPSModule {
         $this->RegisterPropertyString('WebhookName', 'HIKVISION_EVENTS');
         $this->RegisterPropertyString('ChannelId', '101');
         $this->RegisterPropertyString('SavePath', '/user/');
+        $this->RegisterPropertyString('Subnet', '192.168.50.');
         $this->RegisterPropertyString('UserName', 'NotSet');
         $this->RegisterPropertyString('Password', 'NotSet');
         $this->RegisterPropertyInteger('MotionActive', '30');
@@ -329,12 +330,13 @@ class ProcessCameraEvents extends IPSModule {
 
     private function ExecuteMotionDetectionAPI($status)
     {
-        $username = "admin";
-        $password =  "XXXXXXXXXXXX";
-
+        
+        $username = $this->ReadPropertyString('UserName');
+        $password = $this->ReadPropertyString('Password');
+        $subnet   = $this->ReadPropertyString('Subnet');
         // Convert search terms to an array in case multiple terms are provided
         //$searchTerms = explode(",", $this->ReadPropertyString("SearchTerms"));
-        $searchTerms = array("192.168.50.");
+        $searchTerms = array($subnet);
         //$location = $this->ReadPropertyString("Location");
         $location = 'ProcessCameraEvents';
         $pathArray = ["Smart/FieldDetection", "Smart/LineDetection", "Smart/RegionEntrance", "Smart/RegionExiting"];
