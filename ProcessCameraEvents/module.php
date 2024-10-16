@@ -373,8 +373,8 @@ class ProcessCameraEvents extends IPSModule {
         foreach ($filteredObjects as $ipVarId) {
             $ip = GetValueString($ipVarId);
             $parent = IPS_GetParent ($ipVarId);
-            $username = IPS_GetObjectIDByName ("User Name",$parent );
-            $password = IPS_GetObjectIDByName ("Password",$parent );
+            $username = GetValueString(IPS_GetObjectIDByName ("User Name",$parent ));
+            $password = GetValueString(IPS_GetObjectIDByName ("Password",$parent ));
             IPS_LogMessage("CameraMotionDetectionModule", "Processing IP: $ip");
 
             foreach ($pathArray as $path) {
