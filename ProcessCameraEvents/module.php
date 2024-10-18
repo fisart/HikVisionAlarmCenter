@@ -21,9 +21,9 @@ class ProcessCameraEvents extends IPSModule {
         $this->RegisterHook($this->ReadPropertyString('WebhookName'));
 
         // Register a boolean status variable
-        $this->RegisterVariableBoolean("Status", "Status", "~Switch", 0);
-        $this->SetValue("Status",true);
-        $this->EnableAction("Status");
+        $this->RegisterVariableBoolean("Activate all Cameras", "Activate all Cameras", "~Switch", 0);
+        $this->SetValue("Activate all Cameras",true);
+        $this->EnableAction("Activate all Cameras");
 
     }
 
@@ -313,7 +313,7 @@ class ProcessCameraEvents extends IPSModule {
     public function RequestAction($Ident, $Value)
     {
         switch ($Ident) {
-            case "Status":
+            case "Activate all Cameras":
                 // Update the value of the status variable
                 $this->SetValue($Ident, $Value);
 
@@ -333,21 +333,13 @@ class ProcessCameraEvents extends IPSModule {
         
         //$username = $this->ReadPropertyString('UserName');
         //$password = $this->ReadPropertyString('Password');
-        $subnet   = "IP-".$this->ReadPropertyString('Subnet');
-        // Convert search terms to an array in case multiple terms are provided
-        //$searchTerms = explode(",", $this->ReadPropertyString("SearchTerms"));
-        
-        $searchTerms = array($subnet);
-        //$location = $this->ReadPropertyString("Location");
 
         $pathArray = ["Smart/FieldDetection", "Smart/LineDetection", "Smart/RegionEntrance", "Smart/RegionExiting"];
         $newEnabledValue = $status ? 'true' : 'false';
-
-
-
         $rootID = $this->InstanceID;           // Replace with your actual root object ID
         $objectType = 2;           // Replace with the desired object type (e.g., 2 for Variable)
-        $objectName =  $subnet;// Replace with the desired object name
+
+        $objectName = "IP-".$this->ReadPropertyString('Subnet');// Replace with the desired object name
         $matchType = 'partial';    // 'exact' or 'partial'
         $caseSensitive = true;    // true or false
 
@@ -359,34 +351,6 @@ class ProcessCameraEvents extends IPSModule {
             $caseSensitive
         );
 
-/*
-        $location = 'ProcessCameraEvents';
-        $type = 2; // Variable Object Type
-        // Get all objects in IP-Symcon
-        $allObjects = IPS_GetObjectList();
-
-        // Filter objects based on search terms and location
-        $filteredObjects = array_filter($allObjects, function ($objectId) use ($searchTerms, $location, $type) {
-            $name = IPS_GetName($objectId);
-            $locationStr = IPS_GetLocation($objectId);
-            $objectType = IPS_GetObject($objectId)['ObjectType'];
-
-            // Check if any of the search terms are present in the name
-            $nameMatch = false;
-            foreach ($searchTerms as $searchStr) {
-                if (strpos($name, trim($searchStr)) !== false) {
-                    $nameMatch = true;
-                    break;
-                }
-            }
-
-            // Check if the location matches
-            $locationMatch = strpos($locationStr, $location) !== false;
-
-            // Return true if all conditions are met
-            return $nameMatch && $locationMatch && ($objectType == $type);
-        });
-*/
         // Iterate over the filtered IP variables
         foreach ($filteredObjects as $ipVarId) {
             $ip = GetValueString($ipVarId);
