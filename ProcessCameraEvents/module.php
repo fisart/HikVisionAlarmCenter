@@ -21,9 +21,9 @@ class ProcessCameraEvents extends IPSModule {
         $this->RegisterHook($this->ReadPropertyString('WebhookName'));
 
         // Register a boolean status variable
-        $this->RegisterVariableBoolean("Activate all Cameras", "Activate all Cameras", "~Switch", 0);
-        $this->SetValue("Activate all Cameras",true);
-        $this->EnableAction("Activate all Cameras");
+        $this->RegisterVariableBoolean("Activate_all_Cameras", "Activate_all_Cameras", "~Switch", 0);
+        $this->SetValue("Activate_all_Cameras",true);
+        $this->EnableAction("Activate_all_Cameras");
 
     }
 
@@ -313,7 +313,7 @@ class ProcessCameraEvents extends IPSModule {
     public function RequestAction($Ident, $Value)
     {
         switch ($Ident) {
-            case "Activate all Cameras":
+            case "Activate_all_Cameras":
                 // Update the value of the status variable
                 $this->SetValue($Ident, $Value);
 
