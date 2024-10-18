@@ -351,7 +351,7 @@ class ProcessCameraEvents extends IPSModule {
         $matchType = 'partial';    // 'exact' or 'partial'
         $caseSensitive = true;    // true or false
 
-        $filteredObjects = getAllObjectIDsByTypeAndName(
+        $filteredObjects = $this->getAllObjectIDsByTypeAndName(
             $rootID,
             $objectType,
             $objectName,
