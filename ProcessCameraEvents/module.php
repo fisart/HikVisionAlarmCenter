@@ -336,14 +336,32 @@ class ProcessCameraEvents extends IPSModule {
         $subnet   = "IP-".$this->ReadPropertyString('Subnet');
         // Convert search terms to an array in case multiple terms are provided
         //$searchTerms = explode(",", $this->ReadPropertyString("SearchTerms"));
+        
         $searchTerms = array($subnet);
         //$location = $this->ReadPropertyString("Location");
-        $location = 'ProcessCameraEvents';
+
         $pathArray = ["Smart/FieldDetection", "Smart/LineDetection", "Smart/RegionEntrance", "Smart/RegionExiting"];
         $newEnabledValue = $status ? 'true' : 'false';
 
-        $type = 2; // Variable Object Type
 
+
+        $rootID = $this->InstanceID;           // Replace with your actual root object ID
+        $objectType = 2;           // Replace with the desired object type (e.g., 2 for Variable)
+        $objectName =  $subnet;// Replace with the desired object name
+        $matchType = 'partial';    // 'exact' or 'partial'
+        $caseSensitive = true;    // true or false
+
+        $filteredObjects = getAllObjectIDsByTypeAndName(
+            $rootID,
+            $objectType,
+            $objectName,
+            $matchType,
+            $caseSensitive
+        );
+
+/*
+        $location = 'ProcessCameraEvents';
+        $type = 2; // Variable Object Type
         // Get all objects in IP-Symcon
         $allObjects = IPS_GetObjectList();
 
@@ -368,7 +386,7 @@ class ProcessCameraEvents extends IPSModule {
             // Return true if all conditions are met
             return $nameMatch && $locationMatch && ($objectType == $type);
         });
-
+*/
         // Iterate over the filtered IP variables
         foreach ($filteredObjects as $ipVarId) {
             $ip = GetValueString($ipVarId);
@@ -394,7 +412,75 @@ class ProcessCameraEvents extends IPSModule {
             }
         }
     }
-
+    private function getAllObjectIDsByTypeAndName(
+        $rootID,
+        $objectType,
+        $objectName,
+        $matchType = 'exact', // 'exact' or 'partial'
+        $caseSensitive = true
+    ) {
+        if (!IPS_ObjectExists($rootID)) {
+            // Root object does not exist
+            return array();
+        }
+        // Validate matchType
+        if ($matchType != 'exact' && $matchType != 'partial') {
+            throw new InvalidArgumentException("Invalid matchType. Use 'exact' or 'partial'.");
+        }
+        $objectIDs = array();
+        getAllObjectIDsByTypeAndNameRecursive($rootID, $objectType, $objectName, $matchType, $caseSensitive, $objectIDs);
+        return $objectIDs;
+    }
+    
+    private function getAllObjectIDsByTypeAndNameRecursive(
+        $objectID,
+        $objectType,
+        $objectName,
+        $matchType,
+        $caseSensitive,
+        &$objectIDs
+    ) {
+        // Retrieve the object information
+        $object = IPS_GetObject($objectID);
+        // Check if the object type matches
+        if ($object['ObjectType'] == $objectType) {
+            $nameMatches = false;
+            $objectNameCurrent = $object['ObjectName'];
+            $searchName = $objectName;
+            // Apply case sensitivity
+            if (!$caseSensitive) {
+                $objectNameCurrent = strtolower($objectNameCurrent);
+                $searchName = strtolower($searchName);
+            }
+            // Check name matching
+            if ($matchType == 'exact') {
+                if ($objectNameCurrent == $searchName) {
+                    $nameMatches = true;
+                }
+            } elseif ($matchType == 'partial') {
+                if (strpos($objectNameCurrent, $searchName) !== false) {
+                    $nameMatches = true;
+                }
+            }
+            if ($nameMatches) {
+                // Add the current object ID to the list
+                $objectIDs[] = $objectID;
+            }
+        }
+        // Get all child IDs of the current object
+        $childrenIDs = IPS_GetChildrenIDs($objectID);
+        foreach ($childrenIDs as $childID) {
+            // Recursively traverse each child
+            getAllObjectIDsByTypeAndNameRecursive(
+                $childID,
+                $objectType,
+                $objectName,
+                $matchType,
+                $caseSensitive,
+                $objectIDs
+            );
+        }
+    }
     private function callMotionDetectionAPI($ip, $username, $password, $path)
     {
         $url = "http://$ip/ISAPI/$path";
