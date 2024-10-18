@@ -1,365 +1,340 @@
-# ProcessCameraEvents
-Beschreibung des Moduls.
+# ProcessCameraEvents Module for IP-Symcon
 
-### Inhaltsverzeichnis
+This module integrates HIKVISION camera events into the IP-Symcon home automation system. It processes motion detection alerts, downloads snapshots, and manages variables and media objects within IP-Symcon for automation and visualization purposes.
 
-1. [Funktionsumfang](#1-funktionsumfang)
-2. [Voraussetzungen](#2-voraussetzungen)
-3. [Software-Installation](#3-software-installation)
-4. [Einrichten der Instanzen in IP-Symcon](#4-einrichten-der-instanzen-in-ip-symcon)
-5. [Statusvariablen und Profile](#5-statusvariablen-und-profile)
-6. [WebFront](#6-webfront)
-7. [PHP-Befehlsreferenz](#7-php-befehlsreferenz)
+---
 
-### 1. Funktionsumfang
+## Table of Contents
 
-# ProcessCameraEvents Module Documentation
+- [Introduction](#introduction)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+  - [Module Configuration Form](#module-configuration-form)
+  - [Camera Setup](#camera-setup)
+- [Usage](#usage)
+  - [Motion Detection Handling](#motion-detection-handling)
+  - [Activating/Deactivating Motion Detection](#activatingdeactivating-motion-detection)
+- [Methods](#methods)
+  - [Public Methods](#public-methods)
+  - [Private Methods](#private-methods)
+- [Troubleshooting](#troubleshooting)
+- [Security Considerations](#security-considerations)
+- [Contributing](#contributing)
+- [License](#license)
 
-## Overview
+---
 
-The **ProcessCameraEvents** module is designed for IP-Symcon to handle motion detection events from HIKVISION cameras. When a motion event is detected by a HIKVISION camera, the camera sends an event notification to the IP-Symcon server via a webhook. This module processes these events, captures snapshots, and manages related variables and media within IP-Symcon. It also utilizes an Egg Timer to manage the duration of the motion event status.
+## Introduction
+
+The `ProcessCameraEvents` module is designed to receive and process events from HIKVISION and ANNKE cameras. It listens for motion detection events via a webhook, processes the event data, downloads snapshots, and updates IP-Symcon variables and media objects accordingly.
 
 ## Features
 
-- **Webhook Integration**: Receives event notifications from HIKVISION cameras via a customizable webhook.
-- **Snapshot Capture**: Downloads snapshots from the camera upon motion detection.
-- **Variable Management**: Dynamically creates and updates variables associated with each camera and event.
-- **Media Handling**: Stores and updates the latest snapshot as media within IP-Symcon.
-- **Egg Timer Integration**: Uses an Egg Timer to reset the motion status after a specified duration.
-- **Semaphore Usage**: Ensures thread-safe operations using semaphores.
+- **Webhook Integration:** Registers a webhook to receive motion detection events from HIKVISION and ANNKE cameras.
+- **Event Parsing:** Parses XML event notifications and extracts relevant data.
+- **Snapshot Downloading:** Downloads camera snapshots upon motion detection.
+- **Variable Management:** Dynamically creates and updates variables and media objects in IP-Symcon.
+- **Motion Detection Control:** Enables or disables motion detection on all cameras via a single switch.
+- **Egg Timer Integration:** Uses the Egg Timer module to manage motion active states.
 
 ## Requirements
 
-- **IP-Symcon**: Version compatible with module development.
-- **HIKVISION Camera**: Configured to send event notifications via webhook.
-- **Egg Timer Module**: Must be installed from the IP-Symcon Module Store.
-  - **Module ID**: `{17843F0A-BFC8-A4BA-E219-A2D10FC8E5BE}`
+- **IP-Symcon:** Version supporting modules.
+- **HIKVISION or ANNKE Cameras:** Cameras capable of sending event notifications.
+- **Egg Timer Module:** Installable from the IP-Symcon Module Store.
+- **Network Access:** Proper network configuration to allow communication between IP-Symcon and cameras.
 
 ## Installation
 
-1. **Import the Module**:
-   - Use the IP-Symcon Module Control to import the `ProcessCameraEvents` module.
-   - You can import it via the module's GitHub repository URL or by directly placing the PHP file into the modules directory.
+1. **Clone or Download the Repository:**
 
-2. **Install the Egg Timer Module**:
-   - Navigate to the IP-Symcon Module Store.
-   - Search for "Egg Timer" and install it.
-   - Ensure it has the Module ID `{17843F0A-BFC8-A4BA-E219-A2D10FC8E5BE}`.
+   ```bash
+   git clone https://github.com/yourusername/ProcessCameraEvents.git
+   ```
 
-3. **Create an Instance**:
-   - In the IP-Symcon Management Console, create a new instance of the `ProcessCameraEvents` module.
-   - The instance will appear in your IP-Symcon object tree.
+2. **Install the Module in IP-Symcon:**
+
+   - Open the IP-Symcon Management Console.
+   - Navigate to **Modules**.
+   - Click **Add** and enter the path to the cloned repository.
+
+3. **Install Dependencies:**
+
+   - **Egg Timer Module:**
+     - Open the Module Store in IP-Symcon.
+     - Search for **Egg Timer**.
+     - Install the module.
 
 ## Configuration
 
-After creating an instance of the module, you need to configure its properties to match your environment and camera settings.
+### Module Configuration Form
 
-### Properties
+The module provides a configuration form within IP-Symcon for setting up necessary parameters. Below is a detailed explanation of each element in the configuration form:
 
-1. **Webhook Name** (`WebhookName`)
-   - **Type**: String
-   - **Default**: `HIKVISION_EVENTS`
-   - **Description**: The name of the webhook endpoint that the camera will send event notifications to.
-   - **Example**: If set to `HIKVISION_EVENTS`, the webhook URL will be `http://<IP-Symcon-IP>/hook/HIKVISION_EVENTS`.
+#### Labels and Notes
 
-2. **Channel ID** (`ChannelId`)
-   - **Type**: String
-   - **Default**: `101`
-   - **Description**: The channel ID of the camera stream to capture snapshots from.
+- **Compatibility Notice:**
+  - *This module works only with HIKVISION and ANNKE cameras. First, you need to configure Smart Events in the camera setup.*
+- **Authentication Settings:**
+  - *Please note: In your camera configuration, the `System/Security/Web Authentication` needs to be set to `digest/basic`.*
+- **Webhook Configuration:**
+  - *Then, you need to configure the webhook call in the camera alarm server (extended network settings).*
+- **Variable Creation:**
+  - *After a HIKVISION camera has sent an event to the Symcon webhook, a set of variables will be created for each camera.*
+- **Variable Structure:**
+  - *The top-level variable is the camera name. Below it, you will find the IP address, date and time of the event, password, username, and picture of the last event.*
+- **Camera Credentials:**
+  - *If your cameras have different passwords/user IDs, you need to enter the correct data into the relevant variable.*
+- **Egg Timer Module Requirement (Important):**
+  - **Please note: For this module to work, you need to first install the Egg Timer module from the IP-Symcon Module Store.**
 
-3. **Save Path** (`SavePath`)
-   - **Type**: String
-   - **Default**: `/user/`
-   - **Description**: The relative path where snapshots will be saved. The path is relative to the IP-Symcon root directory.
+#### Configuration Parameters
 
-4. **User Name** (`UserName`)
-   - **Type**: String
-   - **Default**: `NotSet`
-   - **Description**: The username for authenticating with the camera to download snapshots.
+- **Webhook Name:** (`WebhookName`, default: `HIKVISION_EVENTS`)
+  - The name of the webhook endpoint that will receive events from the cameras.
+- **Channel ID:** (`ChannelId`, default: `101`)
+  - The camera channel ID used for snapshot retrieval.
+- **Save Path:** (`SavePath`, default: `/user/`)
+  - The relative path where snapshots will be saved within the IP-Symcon directory.
+- **Subnet:** (`Subnet`, default: `192.168.50.`)
+  - The subnet of your camera network. Used to discover cameras and manage IP addresses.
+- **User Name:** (`UserName`, default: `NotSet`)
+  - The default username for accessing the cameras. If individual cameras have different credentials, set them in the variables created after event processing.
+- **Password:** (`Password`, default: `NotSet`)
+  - The default password for accessing the cameras.
+- **Duration the Motion Event Stays Active in Seconds:** (`MotionActive`, default: `30`)
+  - The duration in seconds for which the motion event remains active.
+- **Debug Messages:** (`debug`, default: `false`)
+  - Enable or disable debug logging for the module.
 
-5. **Password** (`Password`)
-   - **Type**: String
-   - **Default**: `NotSet`
-   - **Description**: The password for authenticating with the camera.
+#### Status Indicators
 
-6. **Motion Active Duration** (`MotionActive`)
-   - **Type**: Integer
-   - **Default**: `30`
-   - **Description**: The duration in seconds for which the motion status remains active after a motion event.
+The module provides status codes to indicate its current state:
 
-7. **Debug Mode** (`debug`)
-   - **Type**: Boolean
-   - **Default**: `false`
-   - **Description**: Enables or disables debug logging.
+- **102:** Instance is active.
+- **104:** Instance is inactive.
+- **101:** Instance is being created.
+- **103:** Instance is being deleted.
+- **105:** Instance was not created.
+- **200:** Instance is in error state.
 
-### Steps to Configure
+### Camera Setup
 
-1. **Set the Webhook Name**:
-   - Choose a unique webhook name.
-   - Ensure that the camera is configured to send event notifications to this webhook.
+1. **Configure Smart Events in Cameras:**
 
-2. **Configure Camera Details**:
-   - Set the **Channel ID** to match your camera's stream channel.
-   - Provide the **User Name** and **Password** for camera authentication.
+   - Access your HIKVISION or ANNKE camera's web interface.
+   - Navigate to the **Smart Events** section.
+   - Enable and configure the desired smart events (e.g., motion detection).
 
-3. **Set the Save Path**:
-   - Define where snapshots should be saved.
-   - Ensure the IP-Symcon user has write permissions to this directory.
+2. **Set Web Authentication to Digest/Basic:**
 
-4. **Adjust Motion Active Duration**:
-   - Set how long the motion status should remain active after detection.
+   - In your camera settings, navigate to `System > Security > Web Authentication`.
+   - Set the authentication mode to `digest/basic`.
 
-5. **Enable Debugging (Optional)**:
-   - Set **Debug Mode** to `true` if you wish to enable detailed logging for troubleshooting.
+3. **Configure the Webhook in Camera Alarm Server:**
 
-6. **Apply Changes**:
-   - Click on "Apply" or "Save" to store the configuration.
+   - In the camera's extended network settings, locate the **Alarm Server** configuration.
+   - Set the webhook call to point to your IP-Symcon server:
+
+     ```
+     http://<ip-symcon-server-address>/hook/<WebhookName>
+     ```
+
+4. **Set Individual Camera Credentials (if necessary):**
+
+   - If your cameras have different usernames or passwords, these can be set in the variables created for each camera after the first event is received.
+
+5. **Install Egg Timer Module (Mandatory):**
+
+   - Before using this module, install the **Egg Timer** module from the IP-Symcon Module Store.
+   - The Egg Timer is essential for managing motion active states and timing.
 
 ## Usage
 
-### Setting Up the Camera Webhook
+### Motion Detection Handling
 
-- **Webhook URL**: `http://<IP-Symcon-IP>/hook/<WebhookName>`
-  - Replace `<IP-Symcon-IP>` with your IP-Symcon server's IP address.
-  - Replace `<WebhookName>` with the value set in the module's **Webhook Name** property.
+When a motion event occurs:
 
-- **Camera Configuration**:
-  - Access your HIKVISION camera's web interface.
-  - Navigate to the event notification settings.
-  - Configure the camera to send event notifications to the webhook URL.
+- The camera sends an XML notification to the webhook.
+- The module processes the incoming data in `ProcessHookData()`.
+- Variables and media objects are created or updated:
+  - **Camera Name (Top-Level):**
+    - Represents the name of the camera.
+  - **Event Description:**
+    - Details about the motion event.
+  - **Date and Time of the Event:**
+    - Timestamp when the motion event occurred.
+  - **IP Address:**
+    - The IP address of the camera.
+  - **Password:**
+    - Camera password (if different from the default).
+  - **User Name:**
+    - Camera username (if different from the default).
+  - **Picture of the Last Event:**
+    - Snapshot image captured during the motion event.
 
-### Handling Motion Events
+- An Egg Timer is started to manage the motion active state.
+- Motion status is reset after the specified duration.
 
-When the camera detects motion:
+### Activating/Deactivating Motion Detection
 
-1. **Event Notification**:
-   - The camera sends an event notification to the configured webhook.
+- Use the `Activate_all_Cameras` switch variable to enable or disable motion detection on all cameras.
+- Changing this variable triggers `RequestAction()`, which calls `ExecuteMotionDetectionAPI()` to update camera settings via their API.
 
-2. **Module Processing**:
-   - The `ProcessCameraEvents` module receives the notification.
-   - Parses the XML data from the camera.
-   - Increments the internal event **counter**.
+## Methods
 
-3. **Semaphore Handling**:
-   - Uses semaphores to prevent simultaneous processing of events from the same camera.
+### Public Methods
 
-4. **Variable Management**:
-   - Creates or updates variables representing the camera and motion event.
-   - Stores details such as camera name, IP address, event description, and date/time.
+#### `Create()`
 
-5. **Snapshot Download**:
-   - Authenticates with the camera using the provided credentials.
-   - Downloads the snapshot image.
-   - Saves the image to the specified **Save Path**.
+Initializes the module, registers properties, variables, and ensures the webhook is set up.
 
-6. **Media Handling**:
-   - Stores the snapshot as media within IP-Symcon.
-   - Updates the media object to display the latest snapshot.
+#### `ApplyChanges()`
 
-7. **Egg Timer Activation**:
-   - Activates an Egg Timer instance to reset the motion status after the specified duration.
-   - If an Egg Timer instance doesn't exist, it creates one and sets up an event to reset the motion status.
+Re-registers the webhook when properties change.
 
-### Variables and Media
+#### `ProcessHookData()`
 
-- **Camera Variable**:
-  - Represents the camera.
-  - Stores motion status (boolean), IP address, and user credentials.
+Handles incoming webhook data:
 
-- **Event Description Variable**:
-  - Child variable under the camera.
-  - Stores the event description and associated data.
+- Reads the input stream.
+- Determines if data is file or POST data.
+- Parses XML and extracts motion event information.
+- Calls `handleMotionData()`.
 
-- **Snapshot Media**:
-  - Media object that holds the latest snapshot image from the camera.
+#### `RequestAction($Ident, $Value)`
 
-## Internal Methods and Processes
+Handles actions on interactive variables:
 
-### `Create()`
+- For `Activate_all_Cameras`, it updates the motion detection status on all cameras.
 
-- Initializes the module.
-- Registers properties and attributes.
-- Ensures the webhook is registered.
+#### `Destroy()`
 
-### `ApplyChanges()`
+Cleans up resources and unregisters the webhook when the module is destroyed.
 
-- Called when settings are saved.
-- Re-registers the webhook to ensure it's up-to-date.
+### Private Methods
 
-### `RegisterHook($WebHook)`
+#### `RegisterHook($WebHook)`
 
-- Manages the registration of the webhook with IP-Symcon's WebHook Control instance.
-- Adds, updates, or removes the webhook as necessary.
+Registers or updates the webhook in IP-Symcon.
 
-### `ProcessHookData()`
+#### `handleMotionData($motionData, $source)`
 
-- Main method that processes incoming webhook data.
-- Reads raw input from `php://input` or `$_POST`.
-- Parses the XML data and delegates handling to `handleMotionData()`.
+Processes motion event data:
 
-### `handleMotionData($motionData, $source)`
+- Manages variables and media objects.
+- Downloads snapshots.
+- Initiates the Egg Timer.
 
-- Handles the motion data received from the camera.
-- Manages variables and media.
-- Downloads the snapshot.
-- Activates the Egg Timer.
+#### `parseEventNotificationAlert($xmlString)`
 
-### `parseEventNotificationAlert($xmlString)`
+Parses XML event notifications into an associative array.
 
-- Parses the XML string from the camera into an associative array.
-- Returns the parsed data or `false` on failure.
+#### `downloadHikvisionSnapshot($cameraIp, $channelId, $username, $password, $relativePath)`
 
-### `handle_egg_timer($source, $kamera_name, $kameraId)`
+Downloads a snapshot image from the specified camera.
 
-- Manages the Egg Timer instance for resetting the motion status.
-- Creates an Egg Timer if one doesn't exist.
-- Sets up an event to reset the motion status after the specified duration.
+#### `manageVariable($parent, $name, $type, $profile, $logging, $aggregationType, $initialValue)`
 
-### `manageVariable($parent, $name, $type, $profile, $logging, $aggregationType, $initialValue)`
+Creates or updates a variable with the given parameters.
 
-- Creates or retrieves a variable.
-- Sets up logging and aggregation if necessary.
-- Initializes the variable with a value if provided.
+#### `manageMedia($parent, $name, $imageFile)`
 
-### `manageMedia($parent, $name, $imageFile)`
+Creates or updates a media object for displaying images.
 
-- Creates or retrieves a media object.
-- Updates the media file with the latest snapshot.
+#### `handle_egg_timer($source, $kamera_name, $kameraId)`
 
-### `downloadHikvisionSnapshot($cameraIp, $channelId, $username, $password, $relativePath)`
+Manages the Egg Timer instance for motion timing.
 
-- Downloads a snapshot image from the camera.
-- Handles authentication.
-- Retries the download up to three times if unsuccessful.
+#### `ExecuteMotionDetectionAPI($status)`
 
-### `Destroy()`
+Enables or disables motion detection on all cameras:
 
-- Cleans up when the module is deleted.
-- Unregisters the webhook from the WebHook Control instance.
+- Retrieves camera IPs based on the subnet.
+- Calls `callMotionDetectionAPI()` for each camera.
+- Updates motion detection settings via the camera's API.
 
-## Debugging
+#### `callMotionDetectionAPI($ip, $username, $password, $path)`
 
-- **Enable Debug Mode**:
-  - Set the **Debug Mode** property to `true` to enable detailed logging.
-  - Logs are written to the IP-Symcon log and can be viewed for troubleshooting.
+Retrieves current motion detection settings from a camera.
 
-- **Log Messages**:
-  - Provides information on the module's operations, including semaphore access, variable management, and errors.
+#### `sendModifiedXML($ip, $username, $password, $path, $modifiedXml)`
 
-## Notes and Best Practices
+Sends modified XML configuration back to the camera.
 
-- **Security**:
-  - Ensure that the **User Name** and **Password** for the camera are securely stored.
-  - Avoid using default credentials.
+#### `updateDetectionEnabled($xmlString, $detectionType, $id, $newEnabledValue)`
 
-- **Permissions**:
-  - The IP-Symcon user must have write permissions to the **Save Path** directory.
+Updates the `<enabled>` value in the camera's configuration XML.
 
-- **Camera Configuration**:
-  - The camera must be properly configured to send event notifications to the IP-Symcon webhook.
-  - Test the webhook URL directly to ensure it's reachable from the camera's network.
+#### `getStringAfterSmart($inputString)`
 
-- **Egg Timer Module**:
-  - The Egg Timer module is essential for resetting the motion status.
-  - Ensure it's installed and updated to the latest version.
+Extracts the detection type from a given path.
 
-- **Multiple Cameras**:
-  - For multiple cameras, create separate instances of the `ProcessCameraEvents` module.
-  - Use unique webhook names and ensure each camera is configured correctly.
+#### `GetAllObjectIDsByTypeAndName($rootID, $objectType, $objectName, $matchType, $caseSensitive)`
+
+Retrieves object IDs matching specific criteria.
 
 ## Troubleshooting
 
-- **No Events Processed**:
-  - Verify that the camera is sending events to the correct webhook URL.
-  - Check network connectivity between the camera and IP-Symcon server.
+- **Webhook Not Triggered:**
 
-- **Snapshots Not Downloaded**:
-  - Ensure the camera credentials are correct.
-  - Check that the camera's snapshot URL is accessible from the IP-Symcon server.
+  - Ensure the webhook URL is correctly configured in the camera settings.
+  - Verify that the webhook is registered in IP-Symcon.
+  - Check that the camera's `Web Authentication` is set to `digest/basic`.
 
-- **Egg Timer Not Working**:
-  - Confirm that the Egg Timer module is installed.
-  - Check the logs for any errors related to semaphore access or event handling.
+- **Snapshots Not Downloaded:**
 
-- **Debug Logs**:
-  - Enable **Debug Mode** to get detailed logs.
-  - Review logs for any error messages or warnings.
+  - Check that the username and password are correct.
+  - Ensure the camera's snapshot URL is accessible.
+  - Verify that the `Channel ID` and `Save Path` are correctly configured.
 
-## Example Configuration
+- **Variables Not Updated:**
 
-1. **Create Module Instance**:
-   - Name: `HIKVISION Camera 1`
+  - Verify that the module has the necessary permissions.
+  - Check for errors in the IP-Symcon logs if `debug` is enabled.
+  - Confirm that the camera has sent an event to the webhook.
 
-2. **Set Properties**:
-   - **Webhook Name**: `HIKVISION_CAMERA_1_EVENTS`
-   - **Channel ID**: `101`
-   - **Save Path**: `/user/hikvision_camera_1/`
-   - **User Name**: `admin`
-   - **Password**: `YourSecurePassword`
-   - **Motion Active Duration**: `60`
-   - **Debug Mode**: `true`
+- **Motion Detection Not Controlled:**
 
-3. **Configure Camera**:
-   - Webhook URL: `http://192.168.1.100/hook/HIKVISION_CAMERA_1_EVENTS`
-   - Replace `192.168.1.100` with your IP-Symcon server's IP address.
+  - Ensure the `Activate_all_Cameras` variable is set correctly.
+  - Confirm that cameras accept API commands for motion detection settings.
+  - Verify network connectivity between IP-Symcon and the cameras.
 
-4. **Test Setup**:
-   - Trigger a motion event on the camera.
-   - Check IP-Symcon for updated variables and snapshot media.
-   - Review logs if **Debug Mode** is enabled.
+- **Egg Timer Not Working:**
 
-## Conclusion
+  - Make sure the Egg Timer module is installed from the Module Store.
+  - Verify that the Egg Timer is properly initialized and associated with the camera variables.
 
-The `ProcessCameraEvents` module provides seamless integration between HIKVISION cameras and IP-Symcon. By handling motion events, capturing snapshots, and managing the motion status, it enhances your home automation setup's security capabilities. With proper configuration and utilization of the Egg Timer module, you can effectively monitor and respond to motion events within your IP-Symcon environment.
+## Security Considerations
 
+- **Credential Storage:**
 
+  - Credentials are stored in IP-Symcon variables.
+  - Secure access to IP-Symcon to prevent unauthorized access.
+  - Avoid using default credentials; update usernames and passwords.
 
-### 2. Voraussetzungen
+- **Network Security:**
 
-- IP-Symcon ab Version 7.1
-- HikVision Camera
-- Egg Timer Module from the IP Symcon Modul Store
+  - Use HTTPS if supported by the cameras to encrypt API communication.
+  - Secure your network to prevent interception.
+  - Implement firewall rules to limit access to the cameras and IP-Symcon server.
 
+- **Access Control:**
 
-### 3. Software-Installation
+  - Limit access to the webhook endpoint.
+  - Implement IP filtering or authentication if necessary.
+  - Regularly update and patch your IP-Symcon system and cameras.
 
-* Über den Module Store das 'ProcessCameraEvents'-Modul installieren.
-* Alternativ über das Module Control folgende URL hinzufügen
-* Egg Timer Module from the IP Symcon Modul Store 
+## Contributing
 
-### 4. Einrichten der Instanzen in IP-Symcon
+Contributions are welcome! Please submit issues or pull requests for enhancements or bug fixes.
 
- Unter 'Instanz hinzufügen' kann das 'ProcessCameraEvents'-Modul mithilfe des Schnellfilters gefunden werden.  
-	- Weitere Informationen zum Hinzufügen von Instanzen in der [Dokumentation der Instanzen](https://www.symcon.de/service/dokumentation/konzepte/instanzen/#Instanz_hinzufügen)
+## License
 
-__Konfigurationsseite__:
+This project is licensed under the MIT License.
 
-Name     | Beschreibung
--------- | ------------------
-         |
-         |
+---
 
-### 5. Statusvariablen und Profile
-
-Die Statusvariablen/Kategorien werden automatisch angelegt. Das Löschen einzelner kann zu Fehlfunktionen führen.
-
-#### Statusvariablen
-
-Name   | Typ     | Beschreibung
------- | ------- | ------------
-       |         |
-       |         |
-
-#### Profile
-
-Name   | Typ
------- | -------
-       |
-       |
-
-### 6. WebFront
-
-Die Funktionalität, die das Modul im WebFront bietet.
-
-### 7. PHP-Befehlsreferenz
-
+**Note:** Ensure that all paths, module IDs, and class names are correctly adjusted based on your actual implementation details.
