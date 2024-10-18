@@ -413,91 +413,7 @@ class ProcessCameraEvents extends IPSModule {
         }
     }
     
-    public function GetAllObjectIDsByTypeAndName(
-        int $rootID,
-        int $objectType,
-        string $objectName,
-        string $matchType = 'exact', // 'exact' or 'partial'
-        bool $caseSensitive = true
-    ): array {
-        if (!IPS_ObjectExists($rootID)) {
-            // Root object does not exist
-            return [];
-        }
-
-        // Validate matchType
-        if ($matchType !== 'exact' && $matchType !== 'partial') {
-            throw new InvalidArgumentException("Invalid matchType. Use 'exact' or 'partial'.");
-        }
-
-        $objectIDs = [];
-        $this->GetAllObjectIDsByTypeAndNameRecursive(
-            $rootID,
-            $objectType,
-            $objectName,
-            $matchType,
-            $caseSensitive,
-            $objectIDs
-        );
-
-        return $objectIDs;
-    }
-
-    private function GetAllObjectIDsByTypeAndNameRecursive(
-        int $objectID,
-        int $objectType,
-        string $objectName,
-        string $matchType,
-        bool $caseSensitive,
-        array &$objectIDs
-    ) {
-        // Retrieve the object information
-        $object = IPS_GetObject($objectID);
-
-        // Check if the object type matches
-        if ($object['ObjectType'] === $objectType) {
-            $nameMatches = false;
-            $objectNameCurrent = $object['ObjectName'];
-            $searchName = $objectName;
-
-            // Apply case sensitivity
-            if (!$caseSensitive) {
-                $objectNameCurrent = mb_strtolower($objectNameCurrent);
-                $searchName = mb_strtolower($searchName);
-            }
-
-            // Check name matching
-            if ($matchType === 'exact') {
-                if ($objectNameCurrent === $searchName) {
-                    $nameMatches = true;
-                }
-            } elseif ($matchType === 'partial') {
-                if (mb_strpos($objectNameCurrent, $searchName) !== false) {
-                    $nameMatches = true;
-                }
-            }
-
-            if ($nameMatches) {
-                // Add the current object ID to the list
-                $objectIDs[] = $objectID;
-            }
-        }
-
-        // Get all child IDs of the current object
-        $childrenIDs = IPS_GetChildrenIDs($objectID);
-        foreach ($childrenIDs as $childID) {
-            // Recursively traverse each child
-            $this->GetAllObjectIDsByTypeAndNameRecursive(
-                $childID,
-                $objectType,
-                $objectName,
-                $matchType,
-                $caseSensitive,
-                $objectIDs
-            );
-        }
-    }
-
+   
 
     private function callMotionDetectionAPI($ip, $username, $password, $path)
     {
@@ -643,5 +559,95 @@ class ProcessCameraEvents extends IPSModule {
             //Instanz wurde nicht gelöscht daher bleibt der Webhook bestehen           
         }
     }
+
+
+    public function GetAllObjectIDsByTypeAndName(
+        int $rootID,
+        int $objectType,
+        string $objectName,
+        string $matchType = 'exact', // 'exact' or 'partial'
+        bool $caseSensitive = true
+    ): array {
+        if (!IPS_ObjectExists($rootID)) {
+            // Root object does not exist
+            return [];
+        }
+
+        // Validate matchType
+        if ($matchType !== 'exact' && $matchType !== 'partial') {
+            throw new InvalidArgumentException("Invalid matchType. Use 'exact' or 'partial'.");
+        }
+
+        $objectIDs = [];
+        $this->GetAllObjectIDsByTypeAndNameRecursive(
+            $rootID,
+            $objectType,
+            $objectName,
+            $matchType,
+            $caseSensitive,
+            $objectIDs
+        );
+
+        return $objectIDs;
+    }
+
+    private function GetAllObjectIDsByTypeAndNameRecursive(
+        int $objectID,
+        int $objectType,
+        string $objectName,
+        string $matchType,
+        bool $caseSensitive,
+        array &$objectIDs
+    ) {
+        // Retrieve the object information
+        $object = IPS_GetObject($objectID);
+
+        // Check if the object type matches
+        if ($object['ObjectType'] === $objectType) {
+            $nameMatches = false;
+            $objectNameCurrent = $object['ObjectName'];
+            $searchName = $objectName;
+
+            // Apply case sensitivity
+            if (!$caseSensitive) {
+                $objectNameCurrent = mb_strtolower($objectNameCurrent);
+                $searchName = mb_strtolower($searchName);
+            }
+
+            // Check name matching
+            if ($matchType === 'exact') {
+                if ($objectNameCurrent === $searchName) {
+                    $nameMatches = true;
+                }
+            } elseif ($matchType === 'partial') {
+                if (mb_strpos($objectNameCurrent, $searchName) !== false) {
+                    $nameMatches = true;
+                }
+            }
+
+            if ($nameMatches) {
+                // Add the current object ID to the list
+                $objectIDs[] = $objectID;
+            }
+        }
+
+        // Get all child IDs of the current object
+        $childrenIDs = IPS_GetChildrenIDs($objectID);
+        foreach ($childrenIDs as $childID) {
+            // Recursively traverse each child
+            $this->GetAllObjectIDsByTypeAndNameRecursive(
+                $childID,
+                $objectType,
+                $objectName,
+                $matchType,
+                $caseSensitive,
+                $objectIDs
+            );
+        }
+    }
+
 }
+
+
+
 ?>
