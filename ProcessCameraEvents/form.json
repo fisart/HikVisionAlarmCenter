@@ -75,14 +75,9 @@
       "maximum": 1000,
       "default": 30
     },
-    { "type": "CheckBox", "name": "debug", "caption": "Debug Messages" },
-    { "type": "CheckBox", "name": "EnableBeep", "caption": "Enable Beep Notification"},
-    { "type": "CheckBox", "name": "EnableWhiteLight", "caption": "Enable WhiteLight Notification'],"}
+    { "type": "CheckBox", "name": "debug", "caption": "Debug Messages" }
   ],
-    "actions": [
-     {"type": "Button", "label": "Enable Notifications", "onClick": "HIK_EnableNotifications($id);"},
-     {"type": "Button", "label": "Disable Notifications", "onClick": "HIK_DisableNotifications($id);"}
-    ],
+  "actions": [],
   "status": [
     {
       "code": 102,
