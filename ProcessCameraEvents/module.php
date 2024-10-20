@@ -16,7 +16,9 @@ class ProcessCameraEvents extends IPSModule {
         $this->RegisterPropertyBoolean('debug', false);
         $this->RegisterAttributeInteger('counter', '0');
         $this->RegisterAttributeString('EggTimerModuleId', '{17843F0A-BFC8-A4BA-E219-A2D10FC8E5BE}');
-        
+        $this->RegisterPropertyBoolean('EnableBeep', true);
+        $this->RegisterPropertyBoolean('EnableWhiteLight', true);
+
         // Ensure the webhook is registered
         $this->RegisterHook($this->ReadPropertyString('WebhookName'));
 
@@ -362,6 +364,21 @@ class ProcessCameraEvents extends IPSModule {
             $caseSensitive
         );
 
+
+
+        $enableBeep = $this->ReadPropertyBoolean('EnableBeep');
+        $enableWhiteLight = $this->ReadPropertyBoolean('EnableWhiteLight');
+
+        // Collect the notifications to modify based on the configuration
+        $notifications = [];
+        if ($enableBeep) {
+            $notifications[] = 'beep';
+        }
+        if ($enableWhiteLight) {
+            $notifications[] = 'whiteLight';
+        }
+
+
         // Iterate over the filtered IP variables
         foreach ($filteredObjects as $ipVarId) {
             $ip = GetValueString($ipVarId);
@@ -369,7 +386,7 @@ class ProcessCameraEvents extends IPSModule {
             $username = GetValueString(IPS_GetObjectIDByName ("User Name",$parent ));
             $password = GetValueString(IPS_GetObjectIDByName ("Password",$parent ));
             IPS_LogMessage("CameraAlarmModule", "Processing IP: $ip");
-            $response = $this->ModifyEventTriggers($ip, $username, $password, $eventTriggerIDs, $newEnabledValue);
+            $response = $this->ModifyEventTriggers($ip, $username, $password, $eventTriggerIDs,  $notification,$newEnabledValue);
             IPS_LogMessage("CameraAlarmModule", "Response from $ip: $response");
         }
     }
