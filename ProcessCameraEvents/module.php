@@ -25,6 +25,10 @@ class ProcessCameraEvents extends IPSModule {
         $this->SetValue("Activate_all_Cameras",true);
         $this->EnableAction("Activate_all_Cameras");
 
+        $this->RegisterVariableBoolean("Activate_all_Alarms", "Activate_all_Alarms", "~Switch", 0);
+        $this->SetValue("Activate_all_Alarms",true);
+        $this->EnableAction("Activate_all_Alarms");
+
     }
 
     public function ApplyChanges() {
@@ -320,10 +324,54 @@ class ProcessCameraEvents extends IPSModule {
                 // Execute your custom function when the status changes
                 $this->ExecuteMotionDetectionAPI($Value);
                 break;
-
+                case "Activate_all_Alarms":
+                    // Update the value of the status variable
+                    $this->SetValue($Ident, $Value);
+    
+                    // Execute your custom function when the status changes
+                    $this->ExecuteAlarmTrigerAPI($Value);
+                    break;
+    
             // Handle other variables or actions if necessary
             default:
                 throw new Exception("Invalid Ident");
+        }
+    }
+
+
+    private function ExecuteAlarmTrigerAPI($status)
+    {
+        
+        //$username = $this->ReadPropertyString('UserName');
+        //$password = $this->ReadPropertyString('Password');
+        $eventTriggerIDs = array('linedetection-1', 'fielddetection-1', 'regionEntrance-1', 'regionExiting-1');
+
+        $newEnabledValue = $status ? 'true' : 'false';
+        $rootID = $this->InstanceID;           // Replace with your actual root object ID
+        $objectType = 2;           // Replace with the desired object type (e.g., 2 for Variable)
+
+        $objectName = "IP-".$this->ReadPropertyString('Subnet');// Replace with the desired object name
+        $matchType = 'partial';    // 'exact' or 'partial'
+        $caseSensitive = true;    // true or false
+
+        $filteredObjects = $this->getAllObjectIDsByTypeAndName(
+            $rootID,
+            $objectType,
+            $objectName,
+            $matchType,
+            $caseSensitive
+        );
+
+        // Iterate over the filtered IP variables
+        foreach ($filteredObjects as $ipVarId) {
+            $ip = GetValueString($ipVarId);
+            $parent = IPS_GetParent ($ipVarId);
+            $username = GetValueString(IPS_GetObjectIDByName ("User Name",$parent ));
+            $password = GetValueString(IPS_GetObjectIDByName ("Password",$parent ));
+            IPS_LogMessage("CameraAlarmModule", "Processing IP: $ip");
+            $response = $this->ModifyEventTriggers($ip, $username, $password, $eventTriggerIDs, $newEnabledValue);
+            IPS_LogMessage("CameraAlarmModule", "Response from $ip: $response");
+            }
         }
     }
 
@@ -478,52 +526,6 @@ class ProcessCameraEvents extends IPSModule {
 
 
 
-    public function Destroy() {
-        parent::Destroy();
-        // Add your custom code here
-
-        if (!IPS_InstanceExists($this->InstanceID)) 
-        { 
-            //Destroy existing HIKVISION Webhook Called
-            $ids = IPS_GetInstanceListByModuleID('{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}');
-            if (count($ids) > 0) {
-                //Webhooks vorhanden
-                $hooks = json_decode(IPS_GetProperty($ids[0], 'Hooks'), true);
-                $correct_hook_found = false;
-                foreach ($hooks as $index => $hook) {
-                    if ($hook['TargetID'] == $this->InstanceID) { 
-                        $correct_hook_found = true;
-                        break;
-                    }                 
-                }
-                if ( $correct_hook_found  ) {
-                    //Webhook wird jetzt gelöscht
-        
-                    // Remove the specific webhook from the hooks array
-                    unset($hooks[$index]);
-                
-                    // Re-index the array to prevent gaps in the keys
-                    $hooks = array_values($hooks);
-                
-                    // Update the hooks property with the modified array
-                    IPS_SetProperty($ids[0], 'Hooks', json_encode($hooks));
-                    IPS_ApplyChanges($ids[0]);
-                }  
-                else
-                {
-                    //Webhook not found
-                }
-            }
-            else{
-                //Keine Webhooks vorhanden
-            }
-            // Call the parent destroy to ensure the instance is properly destroyed
-        }
-        else{
-            //Instanz wurde nicht gelöscht daher bleibt der Webhook bestehen           
-        }
-    }
-
 
     public function GetAllObjectIDsByTypeAndName(
         int $rootID,
@@ -608,6 +610,298 @@ class ProcessCameraEvents extends IPSModule {
                 $objectIDs
             );
         }
+    }
+
+
+    public function Destroy() {
+        parent::Destroy();
+        // Add your custom code here
+
+        if (!IPS_InstanceExists($this->InstanceID)) 
+        { 
+            //Destroy existing HIKVISION Webhook Called
+            $ids = IPS_GetInstanceListByModuleID('{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}');
+            if (count($ids) > 0) {
+                //Webhooks vorhanden
+                $hooks = json_decode(IPS_GetProperty($ids[0], 'Hooks'), true);
+                $correct_hook_found = false;
+                foreach ($hooks as $index => $hook) {
+                    if ($hook['TargetID'] == $this->InstanceID) { 
+                        $correct_hook_found = true;
+                        break;
+                    }                 
+                }
+                if ( $correct_hook_found  ) {
+                    //Webhook wird jetzt gelöscht
+        
+                    // Remove the specific webhook from the hooks array
+                    unset($hooks[$index]);
+                
+                    // Re-index the array to prevent gaps in the keys
+                    $hooks = array_values($hooks);
+                
+                    // Update the hooks property with the modified array
+                    IPS_SetProperty($ids[0], 'Hooks', json_encode($hooks));
+                    IPS_ApplyChanges($ids[0]);
+                }  
+                else
+                {
+                    //Webhook not found
+                }
+            }
+            else{
+                //Keine Webhooks vorhanden
+            }
+            // Call the parent destroy to ensure the instance is properly destroyed
+        }
+        else{
+            //Instanz wurde nicht gelöscht daher bleibt der Webhook bestehen           
+        }
+    }
+
+    private function GetEventTriggerIDs()
+    {
+        $idsString = $this->ReadPropertyString('EventTriggerIDs');
+        $idsArray = array_map('trim', explode(',', $idsString));
+        return $idsArray;
+    }
+
+    /**
+     * Modifies the EventTriggers by adding or removing notifications.
+     */
+    private function ModifyEventTriggers($ipAddress, $username, $password, $eventTriggerIDs, $add = true)
+    {
+        // Ensure $eventTriggerIDs is an array
+        if (!is_array($eventTriggerIDs)) {
+            $eventTriggerIDs = array($eventTriggerIDs);
+        }
+
+        foreach ($eventTriggerIDs as $eventTriggerID) {
+            // Trim whitespace and ensure the ID is a string
+            $eventTriggerID = trim((string)$eventTriggerID);
+
+            // Construct the full URL to the specific EventTrigger
+            $url = "http://$ipAddress/ISAPI/Event/triggers/$eventTriggerID";
+
+            // First, get the current EventTrigger XML from the device
+            $currentXml = $this->GetCurrentEventTrigger($url, $username, $password);
+
+            if ($currentXml === false) {
+                IPS_LogMessage(__CLASS__, "Failed to retrieve current EventTrigger from device for ID '$eventTriggerID'.");
+                continue; // Skip to the next ID
+            }
+
+            // Modify the XML
+            $modifiedXml = $this->ModifyEventTriggerXml($currentXml, $add);
+
+            if ($modifiedXml === false) {
+                IPS_LogMessage(__CLASS__, "Failed to modify EventTrigger XML for ID '$eventTriggerID'.");
+                continue; // Skip to the next ID
+            }
+
+            // Send the modified XML back to the device
+            $response = $this->SendModifiedEventTrigger($url, $username, $password, $modifiedXml);
+
+            // Output the response
+            if ($response !== false) {
+                IPS_LogMessage(__CLASS__, "Successfully modified EventTrigger '$eventTriggerID'. Response: $response");
+            }
+        }
+    }
+
+    /**
+     * Retrieves the current EventTrigger XML from the device.
+     */
+    private function GetCurrentEventTrigger($url, $username, $password)
+    {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_USERPWD, "$username:$password");
+        curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+
+        $response = curl_exec($ch);
+
+        if (curl_errno($ch)) {
+            IPS_LogMessage(__CLASS__, 'Error: ' . curl_error($ch));
+            curl_close($ch);
+            return false;
+        }
+
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        if ($httpCode != 200) {
+            IPS_LogMessage(__CLASS__, "Error: Received HTTP code $httpCode when trying to get EventTrigger.");
+            curl_close($ch);
+            return false;
+        }
+
+        curl_close($ch);
+        return $response;
+    }
+
+    /**
+     * Modifies the EventTrigger XML by adding or removing notifications.
+     */
+    private function ModifyEventTriggerXml($xmlString, $add)
+    {
+        // Load the XML string into a DOMDocument
+        $doc = new DOMDocument();
+        $doc->preserveWhiteSpace = false;
+        $doc->formatOutput = true;
+
+        if (!$doc->loadXML($xmlString)) {
+            IPS_LogMessage(__CLASS__, "Error: Failed to parse XML.");
+            return false;
+        }
+
+        // Create a DOMXPath object
+        $xpath = new DOMXPath($doc);
+
+        // Extract the namespace URI from the root element
+        $rootNamespace = $doc->documentElement->namespaceURI;
+
+        // Register the default namespace with a prefix
+        $xpath->registerNamespace('ns', $rootNamespace);
+
+        // Find the EventTriggerNotificationList node
+        $notificationListNodeList = $xpath->query("/ns:EventTrigger/ns:EventTriggerNotificationList");
+
+        if ($notificationListNodeList->length > 0) {
+            $notificationListNode = $notificationListNodeList->item(0);
+
+            if ($add) {
+                // Adding the EventTriggerNotifications for 'whiteLight' and 'beep'
+
+                // Add 'whiteLight' notification if it doesn't exist
+                $whiteLightNotification = $xpath->query("ns:EventTriggerNotification[ns:id='whiteLight']", $notificationListNode);
+                if ($whiteLightNotification->length == 0) {
+                    $newNotification = $this->CreateWhiteLightNotification($doc, $rootNamespace);
+                    $notificationListNode->appendChild($newNotification);
+                }
+
+                // Add 'beep' notification if it doesn't exist
+                $beepNotification = $xpath->query("ns:EventTriggerNotification[ns:id='beep']", $notificationListNode);
+                if ($beepNotification->length == 0) {
+                    $newNotification = $this->CreateBeepNotification($doc, $rootNamespace);
+                    $notificationListNode->appendChild($newNotification);
+                }
+
+            } else {
+                // Removing the EventTriggerNotifications for 'whiteLight' and 'beep'
+
+                // Remove 'whiteLight' notification if it exists
+                $whiteLightNotification = $xpath->query("ns:EventTriggerNotification[ns:id='whiteLight']", $notificationListNode);
+                if ($whiteLightNotification->length > 0) {
+                    $notificationNode = $whiteLightNotification->item(0);
+                    $notificationListNode->removeChild($notificationNode);
+                }
+
+                // Remove 'beep' notification if it exists
+                $beepNotification = $xpath->query("ns:EventTriggerNotification[ns:id='beep']", $notificationListNode);
+                if ($beepNotification->length > 0) {
+                    $notificationNode = $beepNotification->item(0);
+                    $notificationListNode->removeChild($notificationNode);
+                }
+            }
+
+        } else {
+            // The EventTriggerNotificationList does not exist
+            IPS_LogMessage(__CLASS__, "EventTriggerNotificationList does not exist in the EventTrigger.");
+            return false;
+        }
+
+        // Return the modified XML as a string
+        return $doc->saveXML();
+    }
+
+    /**
+     * Creates a 'whiteLight' EventTriggerNotification node.
+     */
+    private function CreateWhiteLightNotification($doc, $namespace)
+    {
+        // Create new EventTriggerNotification node for 'whiteLight'
+        $newNotification = $doc->createElementNS($namespace, 'EventTriggerNotification');
+
+        // Create and append <id>whiteLight</id>
+        $idNode = $doc->createElementNS($namespace, 'id', 'whiteLight');
+        $newNotification->appendChild($idNode);
+
+        // Create and append <notificationMethod>whiteLight</notificationMethod>
+        $methodNode = $doc->createElementNS($namespace, 'notificationMethod', 'whiteLight');
+        $newNotification->appendChild($methodNode);
+
+        // Create and append <notificationRecurrence>beginning</notificationRecurrence>
+        $recurrenceNode = $doc->createElementNS($namespace, 'notificationRecurrence', 'beginning');
+        $newNotification->appendChild($recurrenceNode);
+
+        // Create and append <WhiteLightAction>
+        $whiteLightActionNode = $doc->createElementNS($namespace, 'WhiteLightAction');
+
+        // Create and append <whiteLightDurationTime>0</whiteLightDurationTime>
+        $durationNode = $doc->createElementNS($namespace, 'whiteLightDurationTime', '0');
+        $whiteLightActionNode->appendChild($durationNode);
+
+        $newNotification->appendChild($whiteLightActionNode);
+
+        return $newNotification;
+    }
+
+    /**
+     * Creates a 'beep' EventTriggerNotification node.
+     */
+    private function CreateBeepNotification($doc, $namespace)
+    {
+        // Create new EventTriggerNotification node for 'beep'
+        $newNotification = $doc->createElementNS($namespace, 'EventTriggerNotification');
+
+        // Create and append <id>beep</id>
+        $idNode = $doc->createElementNS($namespace, 'id', 'beep');
+        $newNotification->appendChild($idNode);
+
+        // Create and append <notificationMethod>beep</notificationMethod>
+        $methodNode = $doc->createElementNS($namespace, 'notificationMethod', 'beep');
+        $newNotification->appendChild($methodNode);
+
+        // Create and append <notificationRecurrence>beginning</notificationRecurrence>
+        $recurrenceNode = $doc->createElementNS($namespace, 'notificationRecurrence', 'beginning');
+        $newNotification->appendChild($recurrenceNode);
+
+        return $newNotification;
+    }
+
+    /**
+     * Sends the modified EventTrigger XML back to the device.
+     */
+    private function SendModifiedEventTrigger($url, $username, $password, $modifiedXml)
+    {
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_USERPWD, "$username:$password");
+        curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
+        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "PUT");
+        curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/xml'));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $modifiedXml);
+
+        $response = curl_exec($ch);
+
+        if (curl_errno($ch)) {
+            IPS_LogMessage(__CLASS__, 'Error: ' . curl_error($ch));
+            curl_close($ch);
+            return false;
+        }
+
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        if ($httpCode != 200 && $httpCode != 201) {
+            IPS_LogMessage(__CLASS__, "Error: Received HTTP code $httpCode when trying to send modified EventTrigger.");
+            curl_close($ch);
+            return false;
+        }
+
+        curl_close($ch);
+        return $response;
     }
 
 }
