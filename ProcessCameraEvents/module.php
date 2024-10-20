@@ -386,7 +386,7 @@ class ProcessCameraEvents extends IPSModule {
             $username = GetValueString(IPS_GetObjectIDByName ("User Name",$parent ));
             $password = GetValueString(IPS_GetObjectIDByName ("Password",$parent ));
             IPS_LogMessage("CameraAlarmModule", "Processing IP: $ip");
-            $response = $this->ModifyEventTriggers($ip, $username, $password, $eventTriggerIDs,  $notification,$newEnabledValue);
+            $response = $this->ModifyEventTriggers($ip, $username, $password, $eventTriggerIDs,  $notifications,$newEnabledValue);
             IPS_LogMessage("CameraAlarmModule", "Response from $ip: $response");
         }
     }
