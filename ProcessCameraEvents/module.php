@@ -371,9 +371,9 @@ class ProcessCameraEvents extends IPSModule {
             IPS_LogMessage("CameraAlarmModule", "Processing IP: $ip");
             $response = $this->ModifyEventTriggers($ip, $username, $password, $eventTriggerIDs, $newEnabledValue);
             IPS_LogMessage("CameraAlarmModule", "Response from $ip: $response");
-            }
         }
     }
+    
 
 
     private function ExecuteMotionDetectionAPI($status)
