@@ -323,12 +323,81 @@ class ProcessCameraEvents extends IPSModule {
 
             // Handle other variables or actions if necessary
             default:
-                throw new Exception("Invalid Ident");
+                throw new Exception("Invalid Ident: $Ident");
         }
     }
 
-
     private function ExecuteMotionDetectionAPI($status)
+    {
+        $pathArray       = ["Smart/FieldDetection", "Smart/LineDetection", "Smart/RegionEntrance", "Smart/RegionExiting"];
+        $newEnabledValue = $status ? 'true' : 'false';
+        $rootID          = $this->InstanceID;           
+        $objectType      = 2;   // e.g., Variable
+        $objectName      = "IP-".$this->ReadPropertyString('Subnet');
+        $matchType       = 'partial';
+        $caseSensitive   = true;
+    
+        $filteredObjects = $this->getAllObjectIDsByTypeAndName(
+            $rootID,
+            $objectType,
+            $objectName,
+            $matchType,
+            $caseSensitive
+        );
+    
+        // Iterate over the filtered IP variables
+        foreach ($filteredObjects as $ipVarId) {
+            $ip      = GetValueString($ipVarId);
+            $parent  = IPS_GetParent($ipVarId);
+            $username = GetValueString(IPS_GetObjectIDByName("User Name", $parent));
+            $password = GetValueString(IPS_GetObjectIDByName("Password", $parent));
+    
+            // Optional: Handle empty username/password
+            if (empty($username) || empty($password) || empty($ip)) {
+                IPS_LogMessage(__CLASS__, "Skipping camera because IP/username/password is not set properly (IP: $ip).");
+                continue;
+            }
+    
+            IPS_LogMessage(__CLASS__, "Processing IP: $ip");
+    
+            foreach ($pathArray as $path) {
+                try {
+                    // Call motion detection API
+                    $response = $this->callMotionDetectionAPI($ip, $username, $password, $path);
+                    
+                    // Check if the response is empty or false
+                    if (empty($response)) {
+                        IPS_LogMessage(__CLASS__, "No valid response from $ip for path $path. Skipping...");
+                        continue;
+                    }
+    
+                    // Update detection enabled value
+                    $modifiedXml = $this->updateDetectionEnabled(
+                        $response,
+                        $this->getStringAfterSmart($path),
+                        1,
+                        $newEnabledValue
+                    );
+    
+                    // Send modified XML back to the API
+                    $sendResponse = $this->sendModifiedXML($ip, $username, $password, $path, $modifiedXml);
+    
+                    // Check send response
+                    if ($sendResponse === false || empty($sendResponse)) {
+                        IPS_LogMessage(__CLASS__, "Failed to send modified XML to $ip for path $path.");
+                    } else {
+                        IPS_LogMessage(__CLASS__, "Response from $ip for path $path: $sendResponse");
+                    }
+                } catch (Exception $e) {
+                    IPS_LogMessage(__CLASS__, "Error updating motion detection for IP: $ip, path: $path. Error: " . $e->getMessage());
+                    // Decide if you want to continue the loop or abort everything:
+                    // continue;
+                }
+            } // end foreach $pathArray
+        } // end foreach $filteredObjects
+    }
+    
+    private function ExecuteMotionDetectionAPIold($status)
     {
         
         //$username = $this->ReadPropertyString('UserName');
