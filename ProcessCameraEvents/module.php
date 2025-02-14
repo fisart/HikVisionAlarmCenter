@@ -327,7 +327,7 @@ class ProcessCameraEvents extends IPSModule {
         }
     }
 
-    private function ExecuteMotionDetectionAPI($status)
+    private function ExecuteMotionDetectionAPInew($status)
     {
         $pathArray       = ["Smart/FieldDetection", "Smart/LineDetection", "Smart/RegionEntrance", "Smart/RegionExiting"];
         $newEnabledValue = $status ? 'true' : 'false';
@@ -397,7 +397,7 @@ class ProcessCameraEvents extends IPSModule {
         } // end foreach $filteredObjects
     }
     
-    private function ExecuteMotionDetectionAPIold($status)
+    private function ExecuteMotionDetectionAPI($status)
     {
         
         //$username = $this->ReadPropertyString('UserName');
