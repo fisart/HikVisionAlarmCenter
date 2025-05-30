@@ -75,8 +75,18 @@
       "maximum": 1000,
       "default": 30
     },
+    {
+      "type": "NumberSpinner",
+      "name": "CurlTimeout",
+      "caption": "cURL Timeout (Seconds)",
+      "minimum": 1,
+      "maximum": 60,
+      "default": 10,
+      "tooltip": "Maximum time in seconds to wait for a cURL connection and response from cameras. Prevents script from hanging on unresponsive cameras."
+    },
     { "type": "CheckBox", "name": "debug", "caption": "Debug Messages" }
   ],
+
   "actions": [],
   "status": [
     {
@@ -112,4 +122,3 @@
     }
   ]
 }
- 
