@@ -1,11 +1,10 @@
 {
   "elements": [
-
-   {
+    {
       "type": "Label",
       "caption": "This Module works only with HIKVISION and ANNKE Cameras. First you need to configure Smart Events in the Camera Setup."
     },
-   {
+    {
       "type": "Label",
       "caption": "Please note : In your Camera configuration the System/security/Web-Authentication  needs to be set to digest/basic"
     },
@@ -54,14 +53,13 @@
       "caption": "Subnet",
       "default": "192.168.50."
     },
-
-   {
+    {
       "type": "ValidationTextBox",
       "name": "UserName",
       "caption": "User Name",
       "default": "NotSet"
     },
-   {
+    {
       "type": "ValidationTextBox",
       "name": "Password",
       "caption": "Password",
@@ -84,9 +82,17 @@
       "default": 10,
       "tooltip": "Maximum time in seconds to wait for a cURL connection and response from cameras. Prevents script from hanging on unresponsive cameras."
     },
+    {
+      "type": "NumberSpinner",
+      "name": "SnapshotRetryCount",
+      "caption": "Snapshot Retries",
+      "minimum": 1,
+      "maximum": 10,
+      "default": 3,
+      "tooltip": "Number of times to retry downloading a snapshot if the camera is busy or times out (cURL error 28) or returns HTTP 503."
+    },
     { "type": "CheckBox", "name": "debug", "caption": "Debug Messages" }
   ],
-
   "actions": [],
   "status": [
     {
@@ -114,7 +120,6 @@
       "icon": "inactive",
       "caption": "Instanz wurde nicht erstellt"
     },
-
     {
       "code": 200,
       "icon": "error",

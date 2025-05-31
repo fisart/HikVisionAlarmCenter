@@ -1,5 +1,5 @@
 <?php
-// Version 1.4 (with cURL timeout and robust error handling, including 503 retry for snapshots)
+// Version 1.5 (with configurable cURL timeout and snapshot retry count, and robust error handling)
 class ProcessCameraEvents extends IPSModule {
 
     public function Create() {
@@ -16,6 +16,8 @@ class ProcessCameraEvents extends IPSModule {
         $this->RegisterPropertyBoolean('debug', false);
         // Configurable cURL timeout
         $this->RegisterPropertyInteger('CurlTimeout', 10); // Default to 10 seconds
+        // NEW: Configurable number of retries for snapshots
+        $this->RegisterPropertyInteger('SnapshotRetryCount', 3); // Default to 3 retries
 
         $this->RegisterAttributeInteger('counter', '0');
         $this->RegisterAttributeString('EggTimerModuleId', '{17843F0A-BFC8-A4BA-E219-A2D10FC8E5BE}');
@@ -287,7 +289,7 @@ class ProcessCameraEvents extends IPSModule {
     private function downloadHikvisionSnapshot($cameraIp, $channelId, $username, $password, $fullSavePath) {
         $debug = $this->ReadPropertyBoolean('debug');
         $snapshotUrl = "http://$cameraIp/ISAPI/Streaming/channels/$channelId/picture";
-        $retryCount = 3;
+        $retryCount = $this->ReadPropertyInteger('SnapshotRetryCount'); // Read the configurable retry count
         $timeout = $this->ReadPropertyInteger('CurlTimeout'); // Read the configurable timeout
 
         for ($i = 0; $i < $retryCount; $i++) {
