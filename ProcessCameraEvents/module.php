@@ -1,5 +1,5 @@
 <?php
-// Version 1.5 (with configurable cURL timeout and snapshot retry count, and robust error handling)
+// Version 1.5.1 (with configurable cURL timeout and snapshot retry count, and robust error handling & LogMessage fix)
 class ProcessCameraEvents extends IPSModule {
 
     public function Create() {
@@ -16,7 +16,7 @@ class ProcessCameraEvents extends IPSModule {
         $this->RegisterPropertyBoolean('debug', false);
         // Configurable cURL timeout
         $this->RegisterPropertyInteger('CurlTimeout', 10); // Default to 10 seconds
-        // NEW: Configurable number of retries for snapshots
+        // Configurable number of retries for snapshots
         $this->RegisterPropertyInteger('SnapshotRetryCount', 3); // Default to 3 retries
 
         $this->RegisterAttributeInteger('counter', '0');
@@ -378,11 +378,11 @@ class ProcessCameraEvents extends IPSModule {
 
             // Optional: Handle empty username/password
             if (empty($username) || empty($password) || empty($ip)) {
-                IPS_LogMessage(__CLASS__, "Skipping camera because IP/username/password is not set properly (IP: $ip).");
+                $this->LogMessage("Skipping camera because IP/username/password is not set properly (IP: $ip).", KL_WARNING);
                 continue;
             }
 
-            IPS_LogMessage(__CLASS__, "Processing IP: $ip");
+            $this->LogMessage("Processing IP: $ip", KL_DEBUG); // Changed to $this->LogMessage
 
             foreach ($pathArray as $path) {
                 try {
@@ -391,7 +391,7 @@ class ProcessCameraEvents extends IPSModule {
 
                     // Check if the response is empty or false
                     if ($response === false) { // Explicitly check for false (indicating error from cURL functions)
-                        IPS_LogMessage(__CLASS__, "No valid response from $ip for path $path. Skipping path for this camera.");
+                        $this->LogMessage("No valid response from $ip for path $path. Skipping path for this camera.", KL_WARNING);
                         continue;
                     }
 
@@ -408,12 +408,13 @@ class ProcessCameraEvents extends IPSModule {
 
                     // Check send response
                     if ($sendResponse === false) { // Explicitly check for false
-                        IPS_LogMessage(__CLASS__, "Failed to send modified XML to $ip for path $path. Skipping path for this camera.", KL_WARNING);
+                        $this->LogMessage("Failed to send modified XML to $ip for path $path. Skipping path for this camera.", KL_WARNING);
                     } else {
-                        IPS_LogMessage(__CLASS__, "Successfully updated $path for IP: $ip. Response: " . substr($sendResponse, 0, 100) . "...", KL_DEBUG);
+                        // THIS IS THE ORIGINAL LINE 413, NOW CORRECTED:
+                        $this->LogMessage("Successfully updated $path for IP: $ip. Response: " . substr($sendResponse, 0, 100) . "...", KL_DEBUG);
                     }
                 } catch (Exception $e) {
-                    IPS_LogMessage(__CLASS__, "Error updating motion detection for IP: $ip, path: $path. Error: " . $e->getMessage(), KL_ERROR);
+                    $this->LogMessage("Error updating motion detection for IP: $ip, path: $path. Error: " . $e->getMessage(), KL_ERROR);
                     continue; // Ensure to continue to the next path/camera if an XML manipulation error occurs
                 }
             } // end foreach $pathArray
