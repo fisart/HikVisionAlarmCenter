@@ -1,5 +1,5 @@
 <?php
-// Version 1.4 (with cURL timeout and robust error handling)
+// Version 1.4 (with cURL timeout and robust error handling, including 503 retry for snapshots)
 class ProcessCameraEvents extends IPSModule {
 
     public function Create() {
@@ -14,7 +14,7 @@ class ProcessCameraEvents extends IPSModule {
         $this->RegisterPropertyString('Password', 'NotSet');
         $this->RegisterPropertyInteger('MotionActive', '30');
         $this->RegisterPropertyBoolean('debug', false);
-        // NEW: Configurable cURL timeout
+        // Configurable cURL timeout
         $this->RegisterPropertyInteger('CurlTimeout', 10); // Default to 10 seconds
 
         $this->RegisterAttributeInteger('counter', '0');
@@ -317,9 +317,10 @@ class ProcessCameraEvents extends IPSModule {
                 }
             } else { // Handle cURL or HTTP errors
                 $this->LogMessage("Snapshot download failed for IP: $cameraIp (Attempt " . ($i + 1) . "/$retryCount). HTTP Code: $httpCode. cURL Error ($curlErrno): $curlError", KL_WARNING);
-                if ($curlErrno === 28 /* CURLE_OPERATION_TIMEDOUT */ && $i < $retryCount - 1) {
-                    // It's a timeout, try again after a brief pause
-                    if($debug) $this->LogMessage("Retrying snapshot download for IP: $cameraIp after timeout.", KL_DEBUG);
+                // RETRY CONDITION MODIFIED HERE: Now retries on timeout (28) OR HTTP 503
+                if (($curlErrno === 28 /* CURLE_OPERATION_TIMEDOUT */ || $httpCode === 503) && $i < $retryCount - 1) {
+                    // It's a timeout or service unavailable error, try again after a brief pause
+                    if($debug) $this->LogMessage("Retrying snapshot download for IP: $cameraIp after timeout or 503 response.", KL_DEBUG);
                     sleep(1);
                     continue;
                 }
@@ -416,8 +417,6 @@ class ProcessCameraEvents extends IPSModule {
             } // end foreach $pathArray
         } // end foreach $filteredObjects
     }
-
-    // Removed ExecuteMotionDetectionAPIold as it was a duplicate and not used.
 
     private function callMotionDetectionAPI($ip, $username, $password, $path)
     {
