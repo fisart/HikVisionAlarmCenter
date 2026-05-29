@@ -74,6 +74,13 @@
       "default": 30
     },
     {
+      "type": "CheckBox",
+      "name": "ProcessDurationEvents",
+      "caption": "Process generic Hikvision duration events",
+      "default": true,
+      "tooltip": "If enabled, Hikvision eventType=duration events are processed as valid generic alarms. Disable only if these events cause false alarms."
+    },
+    {
       "type": "NumberSpinner",
       "name": "CurlTimeout",
       "caption": "cURL Timeout (Seconds)",

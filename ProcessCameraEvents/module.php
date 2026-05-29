@@ -1,5 +1,5 @@
 <?php
-// Version 1.5.21 (with configurable cURL timeout and snapshot retry count, and robust error handling & LogMessage fix)
+// Version 1.5.2 (with configurable cURL timeout and snapshot retry count, and robust error handling & LogMessage fix)
 class ProcessCameraEvents extends IPSModule
 {
 
@@ -20,7 +20,8 @@ class ProcessCameraEvents extends IPSModule
         $this->RegisterPropertyInteger('CurlTimeout', 10); // Default to 10 seconds
         // Configurable number of retries for snapshots
         $this->RegisterPropertyInteger('SnapshotRetryCount', 3); // Default to 3 retries
-
+        // Optional handling of Hikvision generic duration events
+        $this->RegisterPropertyBoolean('ProcessDurationEvents', true);
         $this->RegisterAttributeInteger('counter', '0');
         $this->RegisterAttributeString('EggTimerModuleId', '{17843F0A-BFC8-A4BA-E219-A2D10FC8E5BE}');
 
@@ -108,7 +109,11 @@ class ProcessCameraEvents extends IPSModule
             if (is_array($motionData)) {
                 if ($debug) $this->LogMessage("File Data" . $counter . " XML Parser hat ein Array zurückgegeben. Weitere Verarbeitung möglich", KL_DEBUG);
                 if ($debug) $this->LogMessage("File Data" . $counter . " Hier ist das Array " . implode(" ", $motionData), KL_DEBUG);
-                $this->handleMotionData($motionData, "File Data" . $counter);
+                if (($motionData['eventType'] ?? '') === 'duration' && !$this->ReadPropertyBoolean('ProcessDurationEvents')) {
+                    if ($debug) $this->LogMessage("File Data" . $counter . " Duration event ignored by configuration", KL_DEBUG);
+                } else {
+                    $this->handleMotionData($motionData, "File Data" . $counter);
+                }
             } else {
                 if ($debug) $this->LogMessage("File Data" . $counter . " XML Parser hat kein Array zurückgeliefert, daher keine weitere Verarbeitung möglich ", KL_DEBUG);
             }
@@ -124,7 +129,13 @@ class ProcessCameraEvents extends IPSModule
                     $motionData = $this->parseEventNotificationAlert($content);
                     // The original code called handleMotionData twice, consolidating to once
                     // if(array_key_exists('channelName',$motionData)){ if($motionData['channelName'] != ""){ $this->handleMotionData($motionData, "Post Data". $counter);}}
-                    $this->handleMotionData($motionData, "Post Data" . $counter);
+                    if (!is_array($motionData)) {
+                        if ($debug) $this->LogMessage("Post Data" . $counter . " XML Parser hat kein Array zurückgeliefert, daher keine weitere Verarbeitung möglich", KL_DEBUG);
+                    } elseif (($motionData['eventType'] ?? '') === 'duration' && !$this->ReadPropertyBoolean('ProcessDurationEvents')) {
+                        if ($debug) $this->LogMessage("Post Data" . $counter . " Duration event ignored by configuration", KL_DEBUG);
+                    } else {
+                        $this->handleMotionData($motionData, "Post Data" . $counter);
+                    }
                 }
             }
         } else {
