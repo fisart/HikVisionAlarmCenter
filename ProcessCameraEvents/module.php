@@ -1,8 +1,10 @@
 <?php
-// Version 1.5.1 (with configurable cURL timeout and snapshot retry count, and robust error handling & LogMessage fix)
-class ProcessCameraEvents extends IPSModule {
+// Version 1.5.2 (with configurable cURL timeout and snapshot retry count, and robust error handling & LogMessage fix)
+class ProcessCameraEvents extends IPSModule
+{
 
-    public function Create() {
+    public function Create()
+    {
         parent::Create();
 
         // Register properties
@@ -27,12 +29,12 @@ class ProcessCameraEvents extends IPSModule {
 
         // Register a boolean status variable
         $this->RegisterVariableBoolean("Activate_all_Cameras", "Activate_all_Cameras", "~Switch", 0);
-        $this->SetValue("Activate_all_Cameras",true);
+        $this->SetValue("Activate_all_Cameras", true);
         $this->EnableAction("Activate_all_Cameras");
-
     }
 
-    public function ApplyChanges() {
+    public function ApplyChanges()
+    {
         parent::ApplyChanges();
         // Ensure the webhook is registered
         $this->RegisterHook($this->ReadPropertyString('WebhookName'));
@@ -41,122 +43,117 @@ class ProcessCameraEvents extends IPSModule {
     private function RegisterHook($WebHook)
     {
         $debug = $this->ReadPropertyBoolean('debug');
-        if($debug) $this->LogMessage("Register Hook Called", KL_DEBUG);
+        if ($debug) $this->LogMessage("Register Hook Called", KL_DEBUG);
         $ids = IPS_GetInstanceListByModuleID('{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}');
-        $find_Hook = '/hook/'.$WebHook;
+        $find_Hook = '/hook/' . $WebHook;
         if (count($ids) > 0) {
-            if($debug) $this->LogMessage("Webhooks vorhanden", KL_DEBUG);
+            if ($debug) $this->LogMessage("Webhooks vorhanden", KL_DEBUG);
             $hooks = json_decode(IPS_GetProperty($ids[0], 'Hooks'), true);
             $hook_connected_to_script = false;
             $correct_hook_installed = false; // Unused, but kept as per original structure
             $correct_hook_with_wrong_name_installed = false;
             foreach ($hooks as $index => $hook) {
                 if ($hook['TargetID'] == $this->InstanceID) {
-                    if($debug) $this->LogMessage("Webhook bereits mit Instanz verbunden", KL_DEBUG);
+                    if ($debug) $this->LogMessage("Webhook bereits mit Instanz verbunden", KL_DEBUG);
                     $hook_connected_to_script = true;
-                    if  ($hook['Hook'] == $find_Hook) {
+                    if ($hook['Hook'] == $find_Hook) {
                         $correct_hook_installed = true;
                         $hooks[$index]['TargetID'] = $this->InstanceID;
-                        if($debug) $this->LogMessage("Webhook bereits mit der Instanz verbunden und hat den korrekten Namen", KL_DEBUG);
+                        if ($debug) $this->LogMessage("Webhook bereits mit der Instanz verbunden und hat den korrekten Namen", KL_DEBUG);
                         break;
-                    }
-                    else{
+                    } else {
                         $correct_hook_with_wrong_name_installed = true;
                         $hooks[$index]['TargetID'] = $this->InstanceID;
-                        if($debug) $this->LogMessage("Webhook bereits mit Instanz verbunden aber der neue Name muss eingetragen werden", KL_DEBUG);
+                        if ($debug) $this->LogMessage("Webhook bereits mit Instanz verbunden aber der neue Name muss eingetragen werden", KL_DEBUG);
                         break;
                     }
                 }
             }
             if ($correct_hook_with_wrong_name_installed) {
-                    if($debug) $this->LogMessage("Webhook Name wird jetzt korrigiert", KL_DEBUG);
-                    // The hook might already be correctly associated; this overwrites if it has the wrong 'Hook' name
-                    $hooks[$index] = ['Hook' => $WebHook, 'TargetID' => $this->InstanceID];
-                    IPS_SetProperty($ids[0], 'Hooks', json_encode($hooks));
-                    IPS_ApplyChanges($ids[0]);
+                if ($debug) $this->LogMessage("Webhook Name wird jetzt korrigiert", KL_DEBUG);
+                // The hook might already be correctly associated; this overwrites if it has the wrong 'Hook' name
+                $hooks[$index] = ['Hook' => $WebHook, 'TargetID' => $this->InstanceID];
+                IPS_SetProperty($ids[0], 'Hooks', json_encode($hooks));
+                IPS_ApplyChanges($ids[0]);
             }
-            if(!$hook_connected_to_script ){
-                if($debug) $this->LogMessage("Neuer Webhook wird jetzt für die Instanz installiert und verbunden", KL_DEBUG);
+            if (!$hook_connected_to_script) {
+                if ($debug) $this->LogMessage("Neuer Webhook wird jetzt für die Instanz installiert und verbunden", KL_DEBUG);
                 $hooks[] = ['Hook' => $WebHook, 'TargetID' => $this->InstanceID];
                 IPS_SetProperty($ids[0], 'Hooks', json_encode($hooks));
                 IPS_ApplyChanges($ids[0]);
             }
-        }
-        else{
-            if($debug) $this->LogMessage("Keine Webhooks vorhanden", KL_DEBUG);
+        } else {
+            if ($debug) $this->LogMessage("Keine Webhooks vorhanden", KL_DEBUG);
         }
     }
 
-    public function ProcessHookData() {
+    public function ProcessHookData()
+    {
         $counter = $this->ReadAttributeInteger('counter');
         $counter = $counter + 1;
-        $this->WriteAttributeInteger('counter',$counter);
+        $this->WriteAttributeInteger('counter', $counter);
         $debug = $this->ReadPropertyBoolean('debug');
-        if($debug) $this->LogMessage("=======================Start of Script Webhook Processing============================".$counter, KL_DEBUG);
+        if ($debug) $this->LogMessage("=======================Start of Script Webhook Processing============================" . $counter, KL_DEBUG);
 
         $eggTimerModuleId = $this->ReadAttributeString('EggTimerModuleId');
         if (!IPS_GetModule($eggTimerModuleId)) {
-            if($debug) $this->LogMessage("Bitte erst das Egg Timer Modul aus dem Modul Store installieren", KL_ERROR);
+            if ($debug) $this->LogMessage("Bitte erst das Egg Timer Modul aus dem Modul Store installieren", KL_ERROR);
             return;
         }
 
         $webhookData = file_get_contents("php://input", true);
         if ($webhookData !== "") {
-            if($debug) $this->LogMessage("Webhook has delivered File Data", KL_DEBUG);
+            if ($debug) $this->LogMessage("Webhook has delivered File Data", KL_DEBUG);
             $motionData = $this->parseEventNotificationAlert($webhookData);
             if (is_array($motionData)) {
-                if($debug) $this->LogMessage("File Data".$counter." XML Parser hat ein Array zurückgegeben. Weitere Verarbeitung möglich", KL_DEBUG);
-                if($debug) $this->LogMessage("File Data".$counter." Hier ist das Array ".implode(" ",$motionData), KL_DEBUG);
-                $this->handleMotionData($motionData,"File Data". $counter);
-            }
-            else{
-                if($debug) $this->LogMessage("File Data".$counter." XML Parser hat kein Array zurückgeliefert, daher keine weitere Verarbeitung möglich ", KL_DEBUG);
+                if ($debug) $this->LogMessage("File Data" . $counter . " XML Parser hat ein Array zurückgegeben. Weitere Verarbeitung möglich", KL_DEBUG);
+                if ($debug) $this->LogMessage("File Data" . $counter . " Hier ist das Array " . implode(" ", $motionData), KL_DEBUG);
+                $this->handleMotionData($motionData, "File Data" . $counter);
+            } else {
+                if ($debug) $this->LogMessage("File Data" . $counter . " XML Parser hat kein Array zurückgeliefert, daher keine weitere Verarbeitung möglich ", KL_DEBUG);
             }
         } elseif (is_array($_POST)) {
-            if($debug) $this->LogMessage("Post Data".$counter." Webhook has delivered Post Data", KL_DEBUG);
-            if($debug) $this->LogMessage("Post Data".$counter." Array ".implode(" ",$_POST), KL_DEBUG);
-            if(implode(" ",$_POST) == "")
-            {
-                if($debug) $this->LogMessage("Post Data".$counter." Array Empty", KL_DEBUG);
-            }
-            else{
+            if ($debug) $this->LogMessage("Post Data" . $counter . " Webhook has delivered Post Data", KL_DEBUG);
+            if ($debug) $this->LogMessage("Post Data" . $counter . " Array " . implode(" ", $_POST), KL_DEBUG);
+            if (implode(" ", $_POST) == "") {
+                if ($debug) $this->LogMessage("Post Data" . $counter . " Array Empty", KL_DEBUG);
+            } else {
                 foreach ($_POST as $value => $content) {
-                        if($debug) $this->LogMessage("Post Data".$counter." Value : ".$value, KL_DEBUG);
-                        if($debug) $this->LogMessage("Post Data".$counter." Content : ".$content, KL_DEBUG);
-                        $motionData = $this->parseEventNotificationAlert($content);
-                        // The original code called handleMotionData twice, consolidating to once
-                        // if(array_key_exists('channelName',$motionData)){ if($motionData['channelName'] != ""){ $this->handleMotionData($motionData, "Post Data". $counter);}}
-                        $this->handleMotionData($motionData, "Post Data". $counter);
-                    }
+                    if ($debug) $this->LogMessage("Post Data" . $counter . " Value : " . $value, KL_DEBUG);
+                    if ($debug) $this->LogMessage("Post Data" . $counter . " Content : " . $content, KL_DEBUG);
+                    $motionData = $this->parseEventNotificationAlert($content);
+                    // The original code called handleMotionData twice, consolidating to once
+                    // if(array_key_exists('channelName',$motionData)){ if($motionData['channelName'] != ""){ $this->handleMotionData($motionData, "Post Data". $counter);}}
+                    $this->handleMotionData($motionData, "Post Data" . $counter);
+                }
             }
+        } else {
+            if ($debug) $this->LogMessage("Error Not expected Webhook Data", KL_ERROR);
         }
-        else{
-            if($debug) $this->LogMessage("Error Not expected Webhook Data", KL_ERROR);
-        }
-        if($debug) $this->LogMessage("=======================END of Script Webhook Processing============================".$counter, KL_DEBUG);
+        if ($debug) $this->LogMessage("=======================END of Script Webhook Processing============================" . $counter, KL_DEBUG);
     }
 
-    private function handleMotionData($motionData,$source) {
+    private function handleMotionData($motionData, $source)
+    {
         $debug = $this->ReadPropertyBoolean('debug');
-        if($debug) $this->LogMessage($source."--------------------------------Start of Script Motion Data -------------------".$motionData['channelName'], KL_DEBUG);
+        if ($debug) $this->LogMessage($source . "--------------------------------Start of Script Motion Data -------------------" . $motionData['channelName'], KL_DEBUG);
         $notSetYet = 'NotSet';
         $parent = $this->InstanceID;
         $channelId = $this->ReadPropertyString('ChannelId');
         $initialSavePath = $this->ReadPropertyString('SavePath'); // Use a different var name to avoid confusion with $savePath inside loop
         $username = $this->ReadPropertyString('UserName');
-        $password= $this->ReadPropertyString('Password');
+        $password = $this->ReadPropertyString('Password');
         $kamera_name = $motionData['channelName'];
-        $semaphore_process_name = $kamera_name."10";
+        $semaphore_process_name = $kamera_name . "10";
 
-        if (IPS_SemaphoreEnter($semaphore_process_name ,5000))
-        {
-            if($debug) $this->LogMessage("Semaphore process wurde betreten  ".$semaphore_process_name, KL_DEBUG);
+        if (IPS_SemaphoreEnter($semaphore_process_name, 5000)) {
+            if ($debug) $this->LogMessage("Semaphore process wurde betreten  " . $semaphore_process_name, KL_DEBUG);
 
-            $kameraId = $this->manageVariable($parent, $kamera_name , 0, 'Motion', true, 0, "");
+            $kameraId = $this->manageVariable($parent, $kamera_name, 0, 'Motion', true, 0, "");
             $event_descriptionvar_id = $this->manageVariable($kameraId, $motionData['eventDescription'], 3, '~TextBox', true, 0, "");
 
             $username = GetValueString($this->manageVariable($kameraId, "User Name", 3, '~TextBox', true, 0, $username));
-            $password = GetValueString($this->manageVariable($kameraId, "Password", 3, '~TextBox', true, 0, $password ));
+            $password = GetValueString($this->manageVariable($kameraId, "Password", 3, '~TextBox', true, 0, $password));
 
             if ($username != $notSetYet && $password != $notSetYet) {
                 // Ensure the path is correct within IPS kernel directory structure
@@ -165,43 +162,42 @@ class ProcessCameraEvents extends IPSModule {
                 $directory = dirname($fullSavePath);
                 if (!is_dir($directory)) {
                     if (!mkdir($directory, 0777, true)) {
-                        if($debug) $this->LogMessage("Failed to create directory: " . $directory . " for snapshot", KL_ERROR);
+                        if ($debug) $this->LogMessage("Failed to create directory: " . $directory . " for snapshot", KL_ERROR);
                         // Continue without saving snapshot if directory creation fails
                     }
                 }
 
-                if($this->downloadHikvisionSnapshot($motionData['ipAddress'], $channelId, $username, $password, $fullSavePath)) {
-                     $this->manageMedia($event_descriptionvar_id, $motionData['eventDescription']."Last_Picture", $fullSavePath);
+                if ($this->downloadHikvisionSnapshot($motionData['ipAddress'], $channelId, $username, $password, $fullSavePath)) {
+                    $this->manageMedia($event_descriptionvar_id, $motionData['eventDescription'] . "Last_Picture", $fullSavePath);
                 } else {
-                    if($debug) $this->LogMessage("Failed to download snapshot for IP: " . $motionData['ipAddress'], KL_WARNING);
+                    if ($debug) $this->LogMessage("Failed to download snapshot for IP: " . $motionData['ipAddress'], KL_WARNING);
                 }
             } else {
-                if($debug) $this->LogMessage("Please set UserName and Password in Variable for camera: " . $kamera_name, KL_WARNING);
+                if ($debug) $this->LogMessage("Please set UserName and Password in Variable for camera: " . $kamera_name, KL_WARNING);
             }
 
             $dateTime_id = $this->manageVariable($event_descriptionvar_id, "Date and Time", 3, '~TextBox', true, 0, "");
             SetValueString($dateTime_id, $motionData['dateTime']);
             SetValueBoolean($kameraId, true);
-            $kamera_IP_var_id = $this->manageVariable($kameraId, "IP-".$motionData['ipAddress'], 3, '~TextBox', true, 0, "");
-            SetValueString($kamera_IP_var_id,$motionData['ipAddress']);
+            $kamera_IP_var_id = $this->manageVariable($kameraId, "IP-" . $motionData['ipAddress'], 3, '~TextBox', true, 0, "");
+            SetValueString($kamera_IP_var_id, $motionData['ipAddress']);
 
-            $this->handle_egg_timer($source,$kamera_name,$kameraId);
+            $this->handle_egg_timer($source, $kamera_name, $kameraId);
 
-            if($debug) $this->LogMessage("Leave process Semaphore  ".$semaphore_process_name, KL_DEBUG);
+            if ($debug) $this->LogMessage("Leave process Semaphore  " . $semaphore_process_name, KL_DEBUG);
             IPS_SemaphoreLeave($semaphore_process_name);
+        } else {
+            if ($debug) $this->LogMessage("Process Semaphore Active. No execution for this Data " . $semaphore_process_name, KL_DEBUG);
         }
-        else
-        {
-            if($debug) $this->LogMessage("Process Semaphore Active. No execution for this Data ".$semaphore_process_name, KL_DEBUG);
-        }
-        if($debug) $this->LogMessage($source."--------------------------------End of Script Motion Data -------------------".$kamera_name, KL_DEBUG );
+        if ($debug) $this->LogMessage($source . "--------------------------------End of Script Motion Data -------------------" . $kamera_name, KL_DEBUG);
     }
 
-    private function parseEventNotificationAlert($xmlString) {
+    private function parseEventNotificationAlert($xmlString)
+    {
         $debug = $this->ReadPropertyBoolean('debug');
         $xml = @simplexml_load_string($xmlString, "SimpleXMLElement", LIBXML_NOCDATA);
         if ($xml === false) {
-            if($debug) $this->LogMessage("XML parsing failed. Input: " . substr($xmlString, 0, 500) . "...", KL_ERROR);
+            if ($debug) $this->LogMessage("XML parsing failed. Input: " . substr($xmlString, 0, 500) . "...", KL_ERROR);
             return false;
         }
 
@@ -210,25 +206,25 @@ class ProcessCameraEvents extends IPSModule {
         return $array;
     }
 
-    private function handle_egg_timer($source,$kamera_name,$kameraId){
+    private function handle_egg_timer($source, $kamera_name, $kameraId)
+    {
         $motion_active = $this->ReadPropertyInteger('MotionActive');
         $debug = $this->ReadPropertyBoolean('debug');
         $active = $this->Translate('Active');
         $time_in_seconds = $this->Translate('Time in Seconds');
-        $semaphore_egg_timer_name = $kamera_name."EggTimer1";
-        if($debug) $this->LogMessage("Lokalisierte Variablen Namen des Egg Timers. Status : ".$active ."  Zeitdauer : ".$time_in_seconds, KL_DEBUG);
+        $semaphore_egg_timer_name = $kamera_name . "EggTimer1";
+        if ($debug) $this->LogMessage("Lokalisierte Variablen Namen des Egg Timers. Status : " . $active . "  Zeitdauer : " . $time_in_seconds, KL_DEBUG);
 
-        if (IPS_SemaphoreEnter($semaphore_egg_timer_name,1000))
-        {
-            if($debug) $this->LogMessage("Habe Semaphore gesetzt um zu verhindern das mehrere Egg Timer installiert werden   ".$semaphore_egg_timer_name, KL_DEBUG );
+        if (IPS_SemaphoreEnter($semaphore_egg_timer_name, 1000)) {
+            if ($debug) $this->LogMessage("Habe Semaphore gesetzt um zu verhindern das mehrere Egg Timer installiert werden   " . $semaphore_egg_timer_name, KL_DEBUG);
             $eggTimerId = @IPS_GetObjectIDByName("Egg Timer", $kameraId);
             if ($eggTimerId) {
-                if($debug) $this->LogMessage("Der Egg Timer existiert bereits und wird aktiviert  ".$kameraId, KL_DEBUG);
-                $activ_id = @IPS_GetObjectIDByName($active,  $eggTimerId );
+                if ($debug) $this->LogMessage("Der Egg Timer existiert bereits und wird aktiviert  " . $kameraId, KL_DEBUG);
+                $activ_id = @IPS_GetObjectIDByName($active,  $eggTimerId);
                 SetValueInteger(IPS_GetObjectIDByName($time_in_seconds, $eggTimerId), $motion_active);
                 RequestAction(IPS_GetObjectIDByName($active, $eggTimerId), true);
             } else {
-                if($debug) $this->LogMessage("Egg Timer existiert NICHT und wird installiert  ".$kameraId, KL_DEBUG);
+                if ($debug) $this->LogMessage("Egg Timer existiert NICHT und wird installiert  " . $kameraId, KL_DEBUG);
                 $insId = IPS_CreateInstance($this->ReadAttributeString('EggTimerModuleId'));
                 IPS_SetName($insId, "Egg Timer");
                 IPS_SetParent($insId, $kameraId);
@@ -241,17 +237,16 @@ class ProcessCameraEvents extends IPSModule {
                 IPS_SetEventAction($eid, "{75C67945-BE11-5965-C569-602D43F84269}", ["VALUE" => false]);
                 IPS_SetEventActive($eid, true);
                 IPS_SetEventTriggerValue($eid, false);
-                if($debug) $this->LogMessage("Event wurde installiert Event ID ".$eid." Egg Timer ID ".$insId, KL_DEBUG);
+                if ($debug) $this->LogMessage("Event wurde installiert Event ID " . $eid . " Egg Timer ID " . $insId, KL_DEBUG);
             }
-            IPS_SemaphoreLeave($semaphore_egg_timer_name );
-        }
-        else
-        {
-            if($debug) $this->LogMessage("Es wird bereits ein Egg Timer installiert Semaphore war gesetzt ".$semaphore_egg_timer_name, KL_DEBUG);
+            IPS_SemaphoreLeave($semaphore_egg_timer_name);
+        } else {
+            if ($debug) $this->LogMessage("Es wird bereits ein Egg Timer installiert Semaphore war gesetzt " . $semaphore_egg_timer_name, KL_DEBUG);
         }
     }
 
-    private function manageVariable($parent, $name, $type, $profile, $logging, $aggregationType, $initialValue) {
+    private function manageVariable($parent, $name, $type, $profile, $logging, $aggregationType, $initialValue)
+    {
         $archiveId = IPS_GetInstanceListByModuleID('{43192F0B-135B-4CE7-A0A7-1475603F3060}')[0];
         $varId = @IPS_GetVariableIDByName($name, $parent);
 
@@ -274,7 +269,8 @@ class ProcessCameraEvents extends IPSModule {
         return $varId;
     }
 
-    private function manageMedia($parent, $name, $imageFile) {
+    private function manageMedia($parent, $name, $imageFile)
+    {
         $mediaId = @IPS_GetMediaIDByName($name, $parent);
         if ($mediaId === false) {
             $mediaId = IPS_CreateMedia(1);
@@ -286,7 +282,8 @@ class ProcessCameraEvents extends IPSModule {
         return $mediaId;
     }
 
-    private function downloadHikvisionSnapshot($cameraIp, $channelId, $username, $password, $fullSavePath) {
+    private function downloadHikvisionSnapshot($cameraIp, $channelId, $username, $password, $fullSavePath)
+    {
         $debug = $this->ReadPropertyBoolean('debug');
         $snapshotUrl = "http://$cameraIp/ISAPI/Streaming/channels/$channelId/picture";
         $retryCount = $this->ReadPropertyInteger('SnapshotRetryCount'); // Read the configurable retry count
@@ -311,7 +308,7 @@ class ProcessCameraEvents extends IPSModule {
                 if ($fileHandle) { // Check if fopen was successful
                     fwrite($fileHandle, $imageData);
                     fclose($fileHandle);
-                    if($debug) $this->LogMessage("Snapshot successfully downloaded for IP: $cameraIp to $fullSavePath", KL_DEBUG);
+                    if ($debug) $this->LogMessage("Snapshot successfully downloaded for IP: $cameraIp to $fullSavePath", KL_DEBUG);
                     return true;
                 } else {
                     $this->LogMessage("Failed to open/write snapshot file: $fullSavePath (IP: $cameraIp)", KL_ERROR);
@@ -322,7 +319,7 @@ class ProcessCameraEvents extends IPSModule {
                 // RETRY CONDITION MODIFIED HERE: Now retries on timeout (28) OR HTTP 503
                 if (($curlErrno === 28 /* CURLE_OPERATION_TIMEDOUT */ || $httpCode === 503) && $i < $retryCount - 1) {
                     // It's a timeout or service unavailable error, try again after a brief pause
-                    if($debug) $this->LogMessage("Retrying snapshot download for IP: $cameraIp after timeout or 503 response.", KL_DEBUG);
+                    if ($debug) $this->LogMessage("Retrying snapshot download for IP: $cameraIp after timeout or 503 response.", KL_DEBUG);
                     sleep(1);
                     continue;
                 }
@@ -357,7 +354,7 @@ class ProcessCameraEvents extends IPSModule {
         $newEnabledValue = $status ? 'true' : 'false';
         $rootID          = $this->InstanceID;
         $objectType      = 2;   // e.g., Variable
-        $objectName      = "IP-".$this->ReadPropertyString('Subnet');
+        $objectName      = "IP-" . $this->ReadPropertyString('Subnet');
         $matchType       = 'partial';
         $caseSensitive   = true;
 
@@ -452,7 +449,7 @@ class ProcessCameraEvents extends IPSModule {
             return false; // Indicate failure
         }
 
-        if($debug) $this->LogMessage("Successfully retrieved data from $url. HTTP Code: $httpCode", KL_DEBUG);
+        if ($debug) $this->LogMessage("Successfully retrieved data from $url. HTTP Code: $httpCode", KL_DEBUG);
         curl_close($ch);
         return $response;
     }
@@ -491,7 +488,7 @@ class ProcessCameraEvents extends IPSModule {
             return false;
         }
 
-        if($debug) $this->LogMessage("Successfully sent XML to $url. HTTP Code: $httpCode", KL_DEBUG);
+        if ($debug) $this->LogMessage("Successfully sent XML to $url. HTTP Code: $httpCode", KL_DEBUG);
         curl_close($ch);
         return $response;
     }
@@ -507,7 +504,7 @@ class ProcessCameraEvents extends IPSModule {
         $loadSuccess = @$doc->loadXML($xmlString);
 
         if ($loadSuccess === false) {
-            if($debug) $this->LogMessage("Failed to load XML for detection type: {$detectionType}. XML snippet: " . substr($xmlString, 0, 200), KL_ERROR);
+            if ($debug) $this->LogMessage("Failed to load XML for detection type: {$detectionType}. XML snippet: " . substr($xmlString, 0, 200), KL_ERROR);
             throw new Exception("Failed to load XML for detection type: {$detectionType}."); // Re-throw to be caught by ExecuteMotionDetectionAPI
         }
 
@@ -642,12 +639,12 @@ class ProcessCameraEvents extends IPSModule {
         }
     }
 
-    public function Destroy() {
+    public function Destroy()
+    {
         parent::Destroy();
         // Add your custom code here
 
-        if (!IPS_InstanceExists($this->InstanceID))
-        {
+        if (!IPS_InstanceExists($this->InstanceID)) {
             //Destroy existing HIKVISION Webhook Called
             $ids = IPS_GetInstanceListByModuleID('{015A6EB8-D6E5-4B93-B496-0D3F77AE9FE1}');
             if (count($ids) > 0) {
@@ -660,7 +657,7 @@ class ProcessCameraEvents extends IPSModule {
                         break;
                     }
                 }
-                if ( $correct_hook_found  ) {
+                if ($correct_hook_found) {
                     //Webhook wird jetzt gelöscht
 
                     // Remove the specific webhook from the hooks array
@@ -672,20 +669,15 @@ class ProcessCameraEvents extends IPSModule {
                     // Update the hooks property with the modified array
                     IPS_SetProperty($ids[0], 'Hooks', json_encode($hooks));
                     IPS_ApplyChanges($ids[0]);
-                }
-                else
-                {
+                } else {
                     //Webhook not found
                 }
-            }
-            else{
+            } else {
                 //Keine Webhooks vorhanden
             }
             // Call the parent destroy to ensure the instance is properly destroyed
-        }
-        else{
+        } else {
             //Instanz wurde nicht gelöscht daher bleibt der Webhook bestehen
         }
     }
-
 }
