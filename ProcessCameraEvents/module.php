@@ -1,5 +1,5 @@
 <?php
-// Version 1.5.2 (with configurable cURL timeout and snapshot retry count, and robust error handling & LogMessage fix)
+// Version 1.5.21 (with configurable cURL timeout and snapshot retry count, and robust error handling & LogMessage fix)
 class ProcessCameraEvents extends IPSModule
 {
 
