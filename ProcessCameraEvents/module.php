@@ -421,6 +421,8 @@ class ProcessCameraEvents extends IPSModule
                         // THIS IS THE ORIGINAL LINE 413, NOW CORRECTED:
                         $this->LogMessage("Successfully updated $path for IP: $ip. Response: " . substr($sendResponse, 0, 100) . "...", KL_DEBUG);
                     }
+                    // Diagnostic delay before processing the next smart alarm
+                    sleep(1);
                 } catch (Exception $e) {
                     $this->LogMessage("Error updating motion detection for IP: $ip, path: $path. Error: " . $e->getMessage(), KL_ERROR);
                     continue; // Ensure to continue to the next path/camera if an XML manipulation error occurs
