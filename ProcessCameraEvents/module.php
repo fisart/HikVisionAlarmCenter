@@ -1,5 +1,5 @@
 <?php
-// Version 1.5.2 (with configurable cURL timeout and snapshot retry count, and robust error handling & LogMessage fix)
+// Version 1.6.0 (parallel Smart Event workers, configurable same-camera delay, retries and read-back verification)
 class ProcessCameraEvents extends IPSModule
 {
 
@@ -22,6 +22,10 @@ class ProcessCameraEvents extends IPSModule
         $this->RegisterPropertyInteger('SnapshotRetryCount', 3); // Default to 3 retries
         // Optional handling of Hikvision generic duration events
         $this->RegisterPropertyBoolean('ProcessDurationEvents', true);
+        // Smart Event processing: bounded parallel camera workers and per-camera pacing
+        $this->RegisterPropertyInteger('MaxParallelCameras', 16);
+        $this->RegisterPropertyInteger('SmartCommandDelayMs', 500);
+        $this->RegisterPropertyInteger('SmartCommandRetryCount', 2);
         $this->RegisterAttributeInteger('counter', '0');
         $this->RegisterAttributeString('EggTimerModuleId', '{17843F0A-BFC8-A4BA-E219-A2D10FC8E5BE}');
 
@@ -346,30 +350,33 @@ class ProcessCameraEvents extends IPSModule
     {
         switch ($Ident) {
             case "Activate_all_Cameras":
-                // Update the value of the status variable
-                $this->SetValue($Ident, $Value);
-
-                // Execute your custom function when the status changes
-                $this->ExecuteMotionDetectionAPI($Value);
+                // The variable represents the requested target state.
+                $this->SetValue($Ident, (bool) $Value);
+                $this->ExecuteMotionDetectionAPI((bool) $Value);
                 break;
 
-            // Handle other variables or actions if necessary
             default:
                 throw new Exception("Invalid Ident: $Ident");
         }
     }
 
-    private function ExecuteMotionDetectionAPI($status)
+    private function ExecuteMotionDetectionAPI(bool $status): void
     {
-        $pathArray       = ["Smart/FieldDetection", "Smart/LineDetection", "Smart/RegionEntrance", "Smart/RegionExiting"];
-        $newEnabledValue = $status ? 'true' : 'false';
-        $rootID          = $this->InstanceID;
-        $objectType      = 2;   // e.g., Variable
-        $objectName      = "IP-" . $this->ReadPropertyString('Subnet');
-        $matchType       = 'partial';
-        $caseSensitive   = true;
+        // A new run ID immediately invalidates workers from an older operation.
+        try {
+            $runId = time() . '-' . bin2hex(random_bytes(6));
+        } catch (Throwable $e) {
+            $runId = uniqid((string) time(), true);
+        }
+        $this->SetBuffer('SmartAlarmActiveRunId', $runId);
 
-        $filteredObjects = $this->getAllObjectIDsByTypeAndName(
+        $rootID        = $this->InstanceID;
+        $objectType    = 2; // Variable
+        $objectName    = "IP-" . $this->ReadPropertyString('Subnet');
+        $matchType     = 'partial';
+        $caseSensitive = true;
+
+        $filteredObjects = $this->GetAllObjectIDsByTypeAndName(
             $rootID,
             $objectType,
             $objectName,
@@ -377,193 +384,940 @@ class ProcessCameraEvents extends IPSModule
             $caseSensitive
         );
 
-        // Iterate over the filtered IP variables
+        $cameras = [];
         foreach ($filteredObjects as $ipVarId) {
-            $ip      = GetValueString($ipVarId);
-            $parent  = IPS_GetParent($ipVarId);
-            $username = GetValueString(IPS_GetObjectIDByName("User Name", $parent));
-            $password = GetValueString(IPS_GetObjectIDByName("Password", $parent));
+            $ip = trim((string) GetValueString($ipVarId));
+            $parent = IPS_GetParent($ipVarId);
 
-            // Optional: Handle empty username/password
-            if (empty($username) || empty($password) || empty($ip)) {
-                $this->LogMessage("Skipping camera because IP/username/password is not set properly (IP: $ip).", KL_WARNING);
+            $userId = @IPS_GetObjectIDByName("User Name", $parent);
+            $passwordId = @IPS_GetObjectIDByName("Password", $parent);
+            $username = $userId !== false ? (string) GetValueString($userId) : '';
+            $password = $passwordId !== false ? (string) GetValueString($passwordId) : '';
+
+            if ($ip === '' || $username === '' || $password === '' || $username === 'NotSet' || $password === 'NotSet') {
+                $this->LogMessage(
+                    "Skipping camera because IP/username/password is not set properly (IP: $ip).",
+                    KL_WARNING
+                );
                 continue;
             }
 
-            $this->LogMessage("Processing IP: $ip", KL_DEBUG); // Changed to $this->LogMessage
+            // Prevent duplicate workers if duplicate IP variables exist below the instance.
+            if (array_key_exists($ip, $cameras)) {
+                $this->LogMessage("Duplicate camera IP ignored: $ip", KL_WARNING);
+                continue;
+            }
 
-            foreach ($pathArray as $path) {
-                try {
-                    // Call motion detection API
-                    $response = $this->callMotionDetectionAPI($ip, $username, $password, $path);
+            $cameras[$ip] = [
+                'ip'       => $ip,
+                'name'     => IPS_GetName($parent),
+                'username' => $username,
+                'password' => $password
+            ];
+        }
 
-                    // Check if the response is empty or false
-                    if ($response === false) { // Explicitly check for false (indicating error from cURL functions)
-                        $this->LogMessage("No valid response from $ip for path $path. Skipping path for this camera.", KL_WARNING);
-                        continue;
-                    }
+        $cameras = array_values($cameras);
+        if (count($cameras) === 0) {
+            $this->SetBuffer('SmartAlarmActiveRunId', '');
+            $this->LogMessage('No valid cameras found for Smart Event update.', KL_WARNING);
+            return;
+        }
 
-                    // Update detection enabled value
-                    $modifiedXml = $this->updateDetectionEnabled(
-                        $response,
-                        $this->getStringAfterSmart($path),
-                        1,
-                        $newEnabledValue
-                    );
+        $configuredParallel = max(1, min(16, $this->ReadPropertyInteger('MaxParallelCameras')));
+        $workerCount = min($configuredParallel, count($cameras));
+        $workers = array_fill(0, $workerCount, []);
 
-                    // Send modified XML back to the API
-                    $sendResponse = $this->sendModifiedXML($ip, $username, $password, $path, $modifiedXml);
+        // Round-robin assignment keeps the number of simultaneously running workers bounded.
+        foreach ($cameras as $index => $camera) {
+            $workers[$index % $workerCount][] = $camera;
+        }
 
-                    // Check send response
-                    if ($sendResponse === false) { // Explicitly check for false
-                        $this->LogMessage("Failed to send modified XML to $ip for path $path. Skipping path for this camera.", KL_WARNING);
-                    } else {
-                        // THIS IS THE ORIGINAL LINE 413, NOW CORRECTED:
-                        $this->LogMessage("Successfully updated $path for IP: $ip. Response: " . substr($sendResponse, 0, 100) . "...", KL_DEBUG);
-                    }
-                    // Diagnostic delay before processing the next smart alarm
-                    sleep(1);
-                } catch (Exception $e) {
-                    $this->LogMessage("Error updating motion detection for IP: $ip, path: $path. Error: " . $e->getMessage(), KL_ERROR);
-                    continue; // Ensure to continue to the next path/camera if an XML manipulation error occurs
+        $instanceInfo = IPS_GetInstance($this->InstanceID);
+        $moduleId = $instanceInfo['ModuleInfo']['ModuleID'] ?? '';
+        $moduleInfo = $moduleId !== '' ? IPS_GetModule($moduleId) : [];
+        $prefix = (string) ($moduleInfo['Prefix'] ?? '');
+
+        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $prefix)) {
+            $this->SetBuffer('SmartAlarmActiveRunId', '');
+            $this->LogMessage('Unable to determine a valid module prefix for Smart Event workers.', KL_ERROR);
+            return;
+        }
+
+        $runState = [
+            'runId'            => $runId,
+            'targetEnabled'    => $status,
+            'workerCount'      => $workerCount,
+            'completedWorkers' => 0,
+            'cameraCount'      => count($cameras),
+            'startedAt'        => time(),
+            'results'          => []
+        ];
+        $this->SetBuffer('SmartAlarmRunState', json_encode($runState));
+
+        if ($this->ReadPropertyBoolean('debug')) {
+            $this->LogMessage(
+                sprintf(
+                    'Starting Smart Event run %s for %d cameras with %d parallel workers.',
+                    $runId,
+                    count($cameras),
+                    $workerCount
+                ),
+                KL_DEBUG
+            );
+        }
+
+        $workerScript = $prefix . '_ProcessSmartAlarmWorker((int) $_IPS["InstanceID"], (string) $_IPS["WorkerData"]);';
+
+        foreach ($workers as $workerIndex => $workerCameras) {
+            $workerData = [
+                'runId'        => $runId,
+                'workerNumber' => $workerIndex + 1,
+                'enabled'      => $status,
+                'cameras'      => $workerCameras
+            ];
+
+            $started = IPS_RunScriptTextEx(
+                $workerScript,
+                [
+                    'InstanceID' => $this->InstanceID,
+                    'WorkerData' => json_encode($workerData)
+                ]
+            );
+
+            if (!$started) {
+                $this->FinishSmartAlarmWorker(
+                    $runId,
+                    $workerIndex + 1,
+                    [[
+                        'ip'     => '',
+                        'name'   => 'Worker ' . ($workerIndex + 1),
+                        'status' => 'failed',
+                        'paths'  => [[
+                            'path'     => 'Worker startup',
+                            'status'   => 'failed',
+                            'attempts' => 0,
+                            'message'  => 'IP-Symcon did not start the worker thread.'
+                        ]]
+                    ]]
+                );
+            }
+        }
+    }
+
+    /**
+     * Public worker entry point. IP-Symcon exposes this method through the module prefix.
+     */
+    public function ProcessSmartAlarmWorker(string $workerDataJson): void
+    {
+        $workerData = json_decode($workerDataJson, true);
+        if (!is_array($workerData)) {
+            $this->LogMessage('Smart Event worker received invalid JSON data.', KL_ERROR);
+            return;
+        }
+
+        $runId = (string) ($workerData['runId'] ?? '');
+        $workerNumber = (int) ($workerData['workerNumber'] ?? 0);
+        $enabled = (bool) ($workerData['enabled'] ?? false);
+        $cameras = $workerData['cameras'] ?? [];
+        $results = [];
+
+        try {
+            if ($runId === '' || !is_array($cameras)) {
+                throw new Exception('Smart Event worker data is incomplete.');
+            }
+
+            foreach ($cameras as $camera) {
+                if (!$this->IsSmartAlarmRunCurrent($runId)) {
+                    break;
                 }
-            } // end foreach $pathArray
-        } // end foreach $filteredObjects
+
+                if (!is_array($camera)) {
+                    continue;
+                }
+
+                $results[] = $this->ProcessSingleCameraSmartAlarms($camera, $enabled, $runId);
+            }
+        } catch (Throwable $e) {
+            $results[] = [
+                'ip'     => '',
+                'name'   => 'Worker ' . $workerNumber,
+                'status' => 'failed',
+                'paths'  => [[
+                    'path'     => 'Worker execution',
+                    'status'   => 'failed',
+                    'attempts' => 0,
+                    'message'  => $e->getMessage()
+                ]]
+            ];
+        } finally {
+            $this->FinishSmartAlarmWorker($runId, $workerNumber, $results);
+        }
     }
 
-    private function callMotionDetectionAPI($ip, $username, $password, $path)
+    private function ProcessSingleCameraSmartAlarms(array $camera, bool $enabled, string $runId): array
     {
-        $debug = $this->ReadPropertyBoolean('debug');
-        $url = "http://$ip/ISAPI/$path";
-        $timeout = $this->ReadPropertyInteger('CurlTimeout'); // Read the configurable timeout
+        $ip = trim((string) ($camera['ip'] ?? ''));
+        $name = (string) ($camera['name'] ?? $ip);
+        $username = (string) ($camera['username'] ?? '');
+        $password = (string) ($camera['password'] ?? '');
 
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_USERPWD, "$username:$password");
-        curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $timeout); // Timeout for connection phase
-        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout + 5);     // Total timeout for the operation
-        curl_setopt($ch, CURLOPT_FAILONERROR, true);        // Return false on HTTP 4xx/5xx status codes
+        $cameraResult = [
+            'ip'     => $ip,
+            'name'   => $name,
+            'status' => 'success',
+            'paths'  => []
+        ];
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE); // Get HTTP status code
-        $curlError = curl_error($ch);                      // Get cURL error message
-        $curlErrno = curl_errno($ch);                      // Get cURL error number
-
-        if ($curlErrno !== 0) {
-            $this->LogMessage("cURL Error for $url: ($curlErrno) $curlError", KL_ERROR);
-            curl_close($ch);
-            return false; // Indicate failure
-        }
-        if ($httpCode >= 400) { // Check for HTTP client or server errors
-            $this->LogMessage("HTTP Error for $url: Code $httpCode. Response: " . substr($response, 0, 200), KL_ERROR);
-            curl_close($ch);
-            return false; // Indicate failure
+        if ($ip === '' || $username === '' || $password === '') {
+            $cameraResult['status'] = 'failed';
+            $cameraResult['paths'][] = [
+                'path'     => 'Camera configuration',
+                'status'   => 'failed',
+                'attempts' => 0,
+                'message'  => 'Camera IP or credentials are missing.'
+            ];
+            return $cameraResult;
         }
 
-        if ($debug) $this->LogMessage("Successfully retrieved data from $url. HTTP Code: $httpCode", KL_DEBUG);
-        curl_close($ch);
-        return $response;
+        $semaphoreName = 'HikvisionSmartCamera_' . md5($ip);
+        $semaphoreTimeoutMs = max(5000, ($this->ReadPropertyInteger('CurlTimeout') + 2) * 1000);
+
+        if (!IPS_SemaphoreEnter($semaphoreName, $semaphoreTimeoutMs)) {
+            $cameraResult['status'] = 'failed';
+            $cameraResult['paths'][] = [
+                'path'     => 'Camera semaphore',
+                'status'   => 'failed',
+                'attempts' => 0,
+                'message'  => 'The camera is still being configured by another operation.'
+            ];
+            return $cameraResult;
+        }
+
+        try {
+            $lastCommandFinishedAt = 0.0;
+            $paths = [
+                'Smart/FieldDetection',
+                'Smart/LineDetection',
+                'Smart/RegionEntrance',
+                'Smart/RegionExiting'
+            ];
+
+            foreach ($paths as $path) {
+                if (!$this->IsSmartAlarmRunCurrent($runId)) {
+                    $cameraResult['status'] = 'cancelled';
+                    break;
+                }
+
+                $pathResult = $this->ProcessSmartAlarmPath(
+                    $ip,
+                    $username,
+                    $password,
+                    $path,
+                    $enabled,
+                    $runId,
+                    $lastCommandFinishedAt
+                );
+                $cameraResult['paths'][] = $pathResult;
+
+                if ($pathResult['status'] === 'failed') {
+                    $cameraResult['status'] = 'failed';
+                    if (!empty($pathResult['stopCamera'])) {
+                        break;
+                    }
+                }
+            }
+        } finally {
+            IPS_SemaphoreLeave($semaphoreName);
+        }
+
+        return $cameraResult;
     }
 
-    private function sendModifiedXML($ip, $username, $password, $path, $modifiedXml)
-    {
-        $debug = $this->ReadPropertyBoolean('debug');
-        $url = "http://$ip/ISAPI/$path";
-        $timeout = $this->ReadPropertyInteger('CurlTimeout'); // Read the configurable timeout
+    private function ProcessSmartAlarmPath(
+        string $ip,
+        string $username,
+        string $password,
+        string $path,
+        bool $enabled,
+        string $runId,
+        float &$lastCommandFinishedAt
+    ): array {
+        $retryCount = max(0, min(5, $this->ReadPropertyInteger('SmartCommandRetryCount')));
+        $maxAttempts = $retryCount + 1;
+        $detectionType = $this->getStringAfterSmart($path);
+        $requestedValue = $enabled ? 'true' : 'false';
+        $lastMessage = 'Unknown error.';
 
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            if (!$this->IsSmartAlarmRunCurrent($runId)) {
+                return [
+                    'path'     => $path,
+                    'status'   => 'cancelled',
+                    'attempts' => $attempt - 1,
+                    'message'  => 'Superseded by a newer Smart Event operation.'
+                ];
+            }
+
+            $getResult = $this->ExecuteSmartCameraRequest(
+                'GET',
+                $ip,
+                $username,
+                $password,
+                $path,
+                null,
+                $runId,
+                $lastCommandFinishedAt
+            );
+
+            if (!$getResult['success']) {
+                if ($getResult['cancelled']) {
+                    return [
+                        'path'     => $path,
+                        'status'   => 'cancelled',
+                        'attempts' => $attempt - 1,
+                        'message'  => 'Superseded by a newer Smart Event operation.'
+                    ];
+                }
+                if ($getResult['unsupported']) {
+                    return [
+                        'path'     => $path,
+                        'status'   => 'unsupported',
+                        'attempts' => $attempt,
+                        'message'  => $getResult['message']
+                    ];
+                }
+
+                $lastMessage = 'GET failed: ' . $getResult['message'];
+                if ($getResult['temporary'] && $attempt < $maxAttempts) {
+                    if (!$this->WaitForSmartRetry($attempt, $runId)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                return [
+                    'path'       => $path,
+                    'status'     => 'failed',
+                    'attempts'   => $attempt,
+                    'message'    => $lastMessage,
+                    'stopCamera' => $this->ShouldStopCameraAfterRequestFailure($getResult)
+                ];
+            }
+
+            $currentStates = $this->GetDetectionEnabledStates($getResult['body'], $detectionType, 1);
+            if ($currentStates === null || count($currentStates) === 0) {
+                return [
+                    'path'     => $path,
+                    'status'   => 'failed',
+                    'attempts' => $attempt,
+                    'message'  => 'The camera XML does not contain a usable enabled element.'
+                ];
+            }
+
+            // Do not write configuration when all rules already have the requested value.
+            if ($this->AllDetectionStatesMatch($currentStates, $enabled)) {
+                return [
+                    'path'     => $path,
+                    'status'   => 'success',
+                    'attempts' => $attempt,
+                    'message'  => 'Already in the requested state.'
+                ];
+            }
+
+            try {
+                $modifiedXml = $this->updateDetectionEnabled(
+                    $getResult['body'],
+                    $detectionType,
+                    1,
+                    $requestedValue
+                );
+            } catch (Throwable $e) {
+                return [
+                    'path'     => $path,
+                    'status'   => 'failed',
+                    'attempts' => $attempt,
+                    'message'  => 'XML update failed: ' . $e->getMessage()
+                ];
+            }
+
+            $putResult = $this->ExecuteSmartCameraRequest(
+                'PUT',
+                $ip,
+                $username,
+                $password,
+                $path,
+                $modifiedXml,
+                $runId,
+                $lastCommandFinishedAt
+            );
+
+            if (!$putResult['success']) {
+                if ($putResult['cancelled']) {
+                    return [
+                        'path'     => $path,
+                        'status'   => 'cancelled',
+                        'attempts' => $attempt,
+                        'message'  => 'Superseded by a newer Smart Event operation.'
+                    ];
+                }
+                if ($putResult['unsupported']) {
+                    return [
+                        'path'     => $path,
+                        'status'   => 'unsupported',
+                        'attempts' => $attempt,
+                        'message'  => $putResult['message']
+                    ];
+                }
+
+                $lastMessage = 'PUT failed: ' . $putResult['message'];
+                if ($putResult['temporary'] && $attempt < $maxAttempts) {
+                    if (!$this->WaitForSmartRetry($attempt, $runId)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                return [
+                    'path'     => $path,
+                    'status'   => 'failed',
+                    'attempts' => $attempt,
+                    'message'  => $lastMessage
+                ];
+            }
+
+            $responseStatus = $this->ParseHikvisionResponseStatus($putResult['body']);
+            if ($responseStatus['present'] && !$responseStatus['success']) {
+                if ($responseStatus['unsupported']) {
+                    return [
+                        'path'     => $path,
+                        'status'   => 'unsupported',
+                        'attempts' => $attempt,
+                        'message'  => $responseStatus['message']
+                    ];
+                }
+
+                $lastMessage = 'Camera rejected PUT: ' . $responseStatus['message'];
+                if ($responseStatus['temporary'] && $attempt < $maxAttempts) {
+                    if (!$this->WaitForSmartRetry($attempt, $runId)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                return [
+                    'path'     => $path,
+                    'status'   => 'failed',
+                    'attempts' => $attempt,
+                    'message'  => $lastMessage
+                ];
+            }
+
+            // Read back after the configured same-camera delay and verify the result.
+            $verifyResult = $this->ExecuteSmartCameraRequest(
+                'GET',
+                $ip,
+                $username,
+                $password,
+                $path,
+                null,
+                $runId,
+                $lastCommandFinishedAt
+            );
+
+            if (!$verifyResult['success']) {
+                $lastMessage = 'Verification GET failed: ' . $verifyResult['message'];
+                if ($verifyResult['temporary'] && $attempt < $maxAttempts) {
+                    if (!$this->WaitForSmartRetry($attempt, $runId)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                return [
+                    'path'       => $path,
+                    'status'     => 'failed',
+                    'attempts'   => $attempt,
+                    'message'    => $lastMessage,
+                    'stopCamera' => $this->ShouldStopCameraAfterRequestFailure($verifyResult)
+                ];
+            }
+
+            $verifiedStates = $this->GetDetectionEnabledStates($verifyResult['body'], $detectionType, 1);
+            if ($verifiedStates !== null && $this->AllDetectionStatesMatch($verifiedStates, $enabled)) {
+                if ($this->ReadPropertyBoolean('debug')) {
+                    $this->LogMessage("Verified $path for IP $ip on attempt $attempt.", KL_DEBUG);
+                }
+
+                return [
+                    'path'     => $path,
+                    'status'   => 'success',
+                    'attempts' => $attempt,
+                    'message'  => 'Requested state verified.'
+                ];
+            }
+
+            $lastMessage = 'Verification mismatch: the requested state was not returned by the camera.';
+            if ($attempt < $maxAttempts) {
+                if (!$this->WaitForSmartRetry($attempt, $runId)) {
+                    break;
+                }
+            }
+        }
+
+        return [
+            'path'     => $path,
+            'status'   => 'failed',
+            'attempts' => $maxAttempts,
+            'message'  => $lastMessage
+        ];
+    }
+
+    private function ExecuteSmartCameraRequest(
+        string $method,
+        string $ip,
+        string $username,
+        string $password,
+        string $path,
+        ?string $xmlBody,
+        string $runId,
+        float &$lastCommandFinishedAt
+    ): array {
+        if (!$this->WaitForNextSmartCameraCommand($lastCommandFinishedAt, $runId)) {
+            return [
+                'success'     => false,
+                'cancelled'   => true,
+                'temporary'   => false,
+                'unsupported' => false,
+                'httpCode'    => 0,
+                'curlErrno'   => 0,
+                'body'        => '',
+                'message'     => 'Operation cancelled.'
+            ];
+        }
+
+        if (!$this->IsSmartAlarmRunCurrent($runId)) {
+            return [
+                'success'     => false,
+                'cancelled'   => true,
+                'temporary'   => false,
+                'unsupported' => false,
+                'httpCode'    => 0,
+                'curlErrno'   => 0,
+                'body'        => '',
+                'message'     => 'Operation cancelled.'
+            ];
+        }
+
+        $url = "http://$ip/ISAPI/$path";
+        $totalTimeout = max(1, $this->ReadPropertyInteger('CurlTimeout'));
+        $connectTimeout = min(3, $totalTimeout);
+
+        $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_USERPWD, "$username:$password");
-        curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC);
-        curl_setopt($ch, CURLOPT_CUSTOMREQUEST, "PUT");
-        curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/xml'));
-        curl_setopt($ch, CURLOPT_POSTFIELDS, $modifiedXml);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $timeout); // Timeout for connection phase
-        curl_setopt($ch, CURLOPT_TIMEOUT, $timeout + 5);     // Total timeout for the operation
-        curl_setopt($ch, CURLOPT_FAILONERROR, true);        // Return false on HTTP 4xx/5xx status codes
+        curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_BASIC | CURLAUTH_DIGEST);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connectTimeout);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $totalTimeout);
+        curl_setopt($ch, CURLOPT_NOSIGNAL, true);
+        curl_setopt($ch, CURLOPT_FAILONERROR, false);
 
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE); // Get HTTP status code
-        $curlError = curl_error($ch);                      // Get cURL error message
-        $curlErrno = curl_errno($ch);                      // Get cURL error number
+        if ($method === 'PUT') {
+            curl_setopt($ch, CURLOPT_CUSTOMREQUEST, 'PUT');
+            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/xml; charset=UTF-8']);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $xmlBody ?? '');
+        }
+
+        $body = curl_exec($ch);
+        $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlErrno = curl_errno($ch);
+        $curlError = curl_error($ch);
+        curl_close($ch);
+
+        $lastCommandFinishedAt = microtime(true);
+        $bodyString = is_string($body) ? $body : '';
+        $responseStatus = $this->ParseHikvisionResponseStatus($bodyString);
+
+        $temporaryCurlErrors = [6, 7, 28, 52, 55, 56];
+        $temporaryHttpCodes = [408, 429, 500, 502, 503, 504];
+        $temporary = in_array($curlErrno, $temporaryCurlErrors, true)
+            || in_array($httpCode, $temporaryHttpCodes, true)
+            || $responseStatus['temporary'];
+        $unsupported = in_array($httpCode, [404, 405], true) || $responseStatus['unsupported'];
+        $success = $curlErrno === 0 && $httpCode >= 200 && $httpCode < 300;
 
         if ($curlErrno !== 0) {
-            $this->LogMessage("cURL Error sending XML to $url: ($curlErrno) $curlError", KL_ERROR);
-            curl_close($ch);
-            return false;
+            $message = "cURL error $curlErrno: $curlError";
+        } elseif (!$success) {
+            $message = "HTTP $httpCode";
+            if ($responseStatus['present']) {
+                $message .= ': ' . $responseStatus['message'];
+            } elseif ($bodyString !== '') {
+                $message .= ': ' . trim(substr(strip_tags($bodyString), 0, 180));
+            }
+        } else {
+            $message = 'HTTP ' . $httpCode;
         }
-        if ($httpCode >= 400) { // Check for HTTP client or server errors
-            $this->LogMessage("HTTP Error sending XML to $url: Code $httpCode. Response: " . substr($response, 0, 200), KL_ERROR);
-            curl_close($ch);
+
+        if ($this->ReadPropertyBoolean('debug')) {
+            $this->LogMessage("Smart Event $method $url -> $message", KL_DEBUG);
+        }
+
+        return [
+            'success'     => $success,
+            'cancelled'   => false,
+            'temporary'   => $temporary,
+            'unsupported' => $unsupported,
+            'httpCode'    => $httpCode,
+            'curlErrno'   => $curlErrno,
+            'body'        => $bodyString,
+            'message'     => $message
+        ];
+    }
+
+    private function ShouldStopCameraAfterRequestFailure(array $result): bool
+    {
+        $curlErrno = (int) ($result['curlErrno'] ?? 0);
+        $httpCode = (int) ($result['httpCode'] ?? 0);
+
+        if ($curlErrno !== 0 || $httpCode === 0) {
+            return true;
+        }
+
+        // Authentication/authorization errors and exhausted camera-wide service failures
+        // will affect the remaining Smart Event endpoints as well.
+        return in_array($httpCode, [401, 403, 408, 429, 500, 502, 503, 504], true);
+    }
+
+    private function WaitForNextSmartCameraCommand(float $lastCommandFinishedAt, string $runId): bool
+    {
+        $delayMs = max(0, min(5000, $this->ReadPropertyInteger('SmartCommandDelayMs')));
+        if ($lastCommandFinishedAt <= 0.0 || $delayMs === 0) {
+            return $this->IsSmartAlarmRunCurrent($runId);
+        }
+
+        $elapsedMs = (microtime(true) - $lastCommandFinishedAt) * 1000;
+        $remainingMs = (int) ceil($delayMs - $elapsedMs);
+        if ($remainingMs <= 0) {
+            return $this->IsSmartAlarmRunCurrent($runId);
+        }
+
+        return $this->InterruptibleSmartSleep($remainingMs, $runId);
+    }
+
+    private function WaitForSmartRetry(int $failedAttempt, string $runId): bool
+    {
+        // 1 second before retry 1, 2 seconds before retry 2, then capped at 4 seconds.
+        $retryDelayMs = min(4000, 1000 * (2 ** max(0, $failedAttempt - 1)));
+        return $this->InterruptibleSmartSleep($retryDelayMs, $runId);
+    }
+
+    private function InterruptibleSmartSleep(int $milliseconds, string $runId): bool
+    {
+        $remaining = max(0, $milliseconds);
+        while ($remaining > 0) {
+            if (!$this->IsSmartAlarmRunCurrent($runId)) {
+                return false;
+            }
+
+            $slice = min(250, $remaining);
+            IPS_Sleep($slice);
+            $remaining -= $slice;
+        }
+
+        return $this->IsSmartAlarmRunCurrent($runId);
+    }
+
+    private function IsSmartAlarmRunCurrent(string $runId): bool
+    {
+        return $runId !== '' && $this->GetBuffer('SmartAlarmActiveRunId') === $runId;
+    }
+
+    private function ParseHikvisionResponseStatus(string $xmlString): array
+    {
+        $result = [
+            'present'     => false,
+            'success'     => false,
+            'temporary'   => false,
+            'unsupported' => false,
+            'statusCode'  => '',
+            'subStatus'   => '',
+            'statusString' => '',
+            'message'     => 'No Hikvision ResponseStatus returned.'
+        ];
+
+        if (trim($xmlString) === '') {
+            return $result;
+        }
+
+        $xml = @simplexml_load_string($xmlString, 'SimpleXMLElement', LIBXML_NOCDATA);
+        if ($xml === false) {
+            return $result;
+        }
+
+        $statusCodeNodes = $xml->xpath('//*[local-name()="statusCode"]');
+        if (!is_array($statusCodeNodes) || count($statusCodeNodes) === 0) {
+            return $result;
+        }
+
+        $subStatusNodes = $xml->xpath('//*[local-name()="subStatusCode"]');
+        $statusStringNodes = $xml->xpath('//*[local-name()="statusString"]');
+
+        $statusCode = trim((string) $statusCodeNodes[0]);
+        $subStatus = is_array($subStatusNodes) && count($subStatusNodes) > 0
+            ? trim((string) $subStatusNodes[0])
+            : '';
+        $statusString = is_array($statusStringNodes) && count($statusStringNodes) > 0
+            ? trim((string) $statusStringNodes[0])
+            : '';
+
+        $temporarySubStatus = [
+            'serviceUnavailable',
+            'upgrading',
+            'deviceBusy',
+            'reConnectIpc',
+            'noMemory'
+        ];
+        $unsupportedSubStatus = ['notSupport', 'methodNotAllowed'];
+
+        $result['present'] = true;
+        $result['success'] = $statusCode === '1';
+        $result['temporary'] = $statusCode === '2' || in_array($subStatus, $temporarySubStatus, true);
+        $result['unsupported'] = in_array($subStatus, $unsupportedSubStatus, true);
+        $result['statusCode'] = $statusCode;
+        $result['subStatus'] = $subStatus;
+        $result['statusString'] = $statusString;
+
+        $parts = ['statusCode=' . $statusCode];
+        if ($subStatus !== '') {
+            $parts[] = 'subStatusCode=' . $subStatus;
+        }
+        if ($statusString !== '') {
+            $parts[] = 'statusString=' . $statusString;
+        }
+        $result['message'] = implode(', ', $parts);
+
+        return $result;
+    }
+
+    private function GetDetectionEnabledStates(string $xmlString, string $detectionType, int $id): ?array
+    {
+        if (!preg_match('/^[A-Za-z0-9_]+$/', $detectionType)) {
+            return null;
+        }
+
+        $doc = new DOMDocument();
+        $doc->preserveWhiteSpace = false;
+        if (@$doc->loadXML($xmlString) === false) {
+            return null;
+        }
+
+        $xpath = new DOMXPath($doc);
+        $upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $lower = 'abcdefghijklmnopqrstuvwxyz';
+        $typeLower = strtolower($detectionType);
+        $enabledNodes = $xpath->query(
+            '//*[translate(local-name(), "' . $upper . '", "' . $lower . '")="' . $typeLower . '"]'
+                . '/*[local-name()="enabled"]'
+        );
+
+        // Compatibility fallback for the exact structure used by the original module.
+        if ($enabledNodes === false || $enabledNodes->length === 0) {
+            $enabledNodes = $xpath->query(
+                '/*[translate(local-name(), "' . $upper . '", "' . $lower . '")="' . strtolower($detectionType . 'List') . '"]'
+                    . '/*[translate(local-name(), "' . $upper . '", "' . $lower . '")="' . $typeLower . '"]'
+                    . '[*[local-name()="id" and text()="' . $id . '"]]'
+                    . '/*[local-name()="enabled"]'
+            );
+        }
+
+        if ($enabledNodes === false || $enabledNodes->length === 0) {
+            return null;
+        }
+
+        $states = [];
+        foreach ($enabledNodes as $enabledNode) {
+            $value = strtolower(trim((string) $enabledNode->nodeValue));
+            if (in_array($value, ['true', '1', 'on'], true)) {
+                $states[] = true;
+            } elseif (in_array($value, ['false', '0', 'off'], true)) {
+                $states[] = false;
+            } else {
+                return null;
+            }
+        }
+
+        return $states;
+    }
+
+    private function AllDetectionStatesMatch(array $states, bool $enabled): bool
+    {
+        if (count($states) === 0) {
             return false;
         }
 
-        if ($debug) $this->LogMessage("Successfully sent XML to $url. HTTP Code: $httpCode", KL_DEBUG);
-        curl_close($ch);
-        return $response;
+        foreach ($states as $state) {
+            if ((bool) $state !== $enabled) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function updateDetectionEnabled($xmlString, $detectionType, $id, $newEnabledValue)
     {
         $debug = $this->ReadPropertyBoolean('debug');
-        // Load the XML string into a DOMDocument
+        if (!preg_match('/^[A-Za-z0-9_]+$/', (string) $detectionType)) {
+            throw new Exception('Invalid detection type.');
+        }
+
         $doc = new DOMDocument();
         $doc->preserveWhiteSpace = false;
         $doc->formatOutput = true;
-        // Suppress warnings for malformed XML loading, let DOMDocument's own error handling manage it
         $loadSuccess = @$doc->loadXML($xmlString);
 
         if ($loadSuccess === false) {
-            if ($debug) $this->LogMessage("Failed to load XML for detection type: {$detectionType}. XML snippet: " . substr($xmlString, 0, 200), KL_ERROR);
-            throw new Exception("Failed to load XML for detection type: {$detectionType}."); // Re-throw to be caught by ExecuteMotionDetectionAPI
+            if ($debug) {
+                $this->LogMessage(
+                    "Failed to load XML for detection type: {$detectionType}. XML snippet: " . substr($xmlString, 0, 200),
+                    KL_ERROR
+                );
+            }
+            throw new Exception("Failed to load XML for detection type: {$detectionType}.");
         }
 
-        // Create a DOMXPath object
         $xpath = new DOMXPath($doc);
+        $upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+        $lower = 'abcdefghijklmnopqrstuvwxyz';
+        $typeLower = strtolower((string) $detectionType);
+        $enabledNodeList = $xpath->query(
+            '//*[translate(local-name(), "' . $upper . '", "' . $lower . '")="' . $typeLower . '"]'
+                . '/*[local-name()="enabled"]'
+        );
 
-        // Extract the namespace URI from the root element
-        $rootNamespace = $doc->documentElement->namespaceURI;
-
-        // Register the default namespace with a prefix
-        $xpath->registerNamespace('ns', $rootNamespace);
-
-        // Build the XPath expression dynamically based on the detection type
-        $xpathExpression = "/ns:{$detectionType}List/ns:{$detectionType}[ns:id='{$id}']/ns:enabled";
-
-        // Query for the <enabled> node
-        $enabledNodeList = $xpath->query($xpathExpression);
-
-        // Check if the node exists and update its value
-        if ($enabledNodeList->length > 0) {
-            $enabledNode = $enabledNodeList->item(0);
-            $enabledNode->nodeValue = $newEnabledValue;
-        } else {
-            // Optionally handle the case where the <id> is not found
-            throw new Exception("{$detectionType} with id {$id} not found or does not have an <enabled> tag in the XML.");
+        // Compatibility fallback for cameras returning only the original ID=1 list structure.
+        if ($enabledNodeList === false || $enabledNodeList->length === 0) {
+            $enabledNodeList = $xpath->query(
+                '/*[translate(local-name(), "' . $upper . '", "' . $lower . '")="' . strtolower($detectionType . 'List') . '"]'
+                    . '/*[translate(local-name(), "' . $upper . '", "' . $lower . '")="' . $typeLower . '"]'
+                    . '[*[local-name()="id" and text()="' . (int) $id . '"]]'
+                    . '/*[local-name()="enabled"]'
+            );
         }
 
-        // Return the modified XML as a string
+        if ($enabledNodeList === false || $enabledNodeList->length === 0) {
+            throw new Exception(
+                "{$detectionType} does not contain a supported <enabled> element."
+            );
+        }
+
+        // The global switch controls all configured rules of this Smart Event type.
+        foreach ($enabledNodeList as $enabledNode) {
+            $enabledNode->nodeValue = $newEnabledValue;
+        }
+
         return $doc->saveXML();
     }
 
     private function getStringAfterSmart($inputString)
     {
-        // Use strpos to find the position of "Smart/" in the string
         $position = strpos($inputString, 'Smart/');
-
-        // Check if "Smart/" is found in the string
         if ($position !== false) {
-            // Calculate the starting position of the substring after "Smart/"
-            $startPosition = $position + strlen('Smart/');
+            return substr($inputString, $position + strlen('Smart/'));
+        }
 
-            // Use substr to extract the substring from the starting position to the end
-            return substr($inputString, $startPosition);
-        } else {
-            // If "Smart/" is not found, return the original string or handle as needed
-            return $inputString;
+        return $inputString;
+    }
+
+    private function FinishSmartAlarmWorker(string $runId, int $workerNumber, array $workerResults): void
+    {
+        $semaphoreName = 'HikvisionSmartResults_' . $this->InstanceID;
+        if (!IPS_SemaphoreEnter($semaphoreName, 10000)) {
+            $this->LogMessage(
+                "Unable to record completion of Smart Event worker $workerNumber.",
+                KL_ERROR
+            );
+            return;
+        }
+
+        try {
+            $state = json_decode($this->GetBuffer('SmartAlarmRunState'), true);
+            if (!is_array($state) || ($state['runId'] ?? '') !== $runId) {
+                return;
+            }
+
+            foreach ($workerResults as $result) {
+                $state['results'][] = $result;
+            }
+            $state['completedWorkers'] = (int) ($state['completedWorkers'] ?? 0) + 1;
+            $this->SetBuffer('SmartAlarmRunState', json_encode($state));
+
+            if ($state['completedWorkers'] < $state['workerCount']) {
+                return;
+            }
+
+            $failures = [];
+            $successfulCameras = 0;
+            foreach ($state['results'] as $cameraResult) {
+                if (($cameraResult['status'] ?? '') === 'success') {
+                    $successfulCameras++;
+                }
+
+                foreach (($cameraResult['paths'] ?? []) as $pathResult) {
+                    if (($pathResult['status'] ?? '') !== 'failed') {
+                        continue;
+                    }
+
+                    $cameraLabel = trim((string) ($cameraResult['name'] ?? ''));
+                    $cameraIp = trim((string) ($cameraResult['ip'] ?? ''));
+                    if ($cameraIp !== '') {
+                        $cameraLabel .= ($cameraLabel !== '' ? ' ' : '') . '(' . $cameraIp . ')';
+                    }
+                    if ($cameraLabel === '') {
+                        $cameraLabel = 'Unknown camera';
+                    }
+
+                    $failures[] = sprintf(
+                        '%s / %s: %s',
+                        $cameraLabel,
+                        (string) ($pathResult['path'] ?? 'Unknown path'),
+                        (string) ($pathResult['message'] ?? 'Unknown error')
+                    );
+                }
+            }
+
+            if ($this->GetBuffer('SmartAlarmActiveRunId') === $runId) {
+                $this->SetBuffer('SmartAlarmActiveRunId', '');
+            }
+
+            if (count($failures) === 0) {
+                if ($this->ReadPropertyBoolean('debug')) {
+                    $this->LogMessage(
+                        sprintf(
+                            'Smart Event run completed successfully for %d cameras.',
+                            (int) $state['cameraCount']
+                        ),
+                        KL_DEBUG
+                    );
+                }
+            } else {
+                $shownFailures = array_slice($failures, 0, 20);
+                $suffix = count($failures) > 20
+                    ? sprintf(' (+%d additional failures)', count($failures) - 20)
+                    : '';
+                $this->LogMessage(
+                    sprintf(
+                        'Smart Event run incomplete: %d of %d cameras completed without errors. %s%s',
+                        $successfulCameras,
+                        (int) $state['cameraCount'],
+                        implode(' | ', $shownFailures),
+                        $suffix
+                    ),
+                    KL_WARNING
+                );
+            }
+        } finally {
+            IPS_SemaphoreLeave($semaphoreName);
         }
     }
 

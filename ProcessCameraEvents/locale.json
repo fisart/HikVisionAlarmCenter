@@ -1,15 +1,22 @@
 {
-    "translations": {
-        "de": {
-            "Eggtimer": "Eieruhr",
-            "Update Interval": "Aktualisierungsintervall",
-            "Remaining": "Verbleibend",
-            "Time in Seconds": "Zeit in Sekunden",
-            "Off": "Aus",
-            "Active": "Aktiv",
-            "Seconds": "Sekunden",
-            "https://www.symcon.de/en/service/documentation/module-reference/egg-timer/": "https://www.symcon.de/de/service/dokumentation/modulreferenz/eieruhr/",
-            "Egg Timer": "Eieruhr"
-        }
+  "translations": {
+    "de": {
+      "Eggtimer": "Eieruhr",
+      "Update Interval": "Aktualisierungsintervall",
+      "Remaining": "Verbleibend",
+      "Time in Seconds": "Zeit in Sekunden",
+      "Off": "Aus",
+      "Active": "Aktiv",
+      "Seconds": "Sekunden",
+      "https://www.symcon.de/en/service/documentation/module-reference/egg-timer/": "https://www.symcon.de/de/service/dokumentation/modulreferenz/eieruhr/",
+      "Egg Timer": "Eieruhr",
+      "Maximum cameras processed in parallel": "Maximale Anzahl parallel verarbeiteter Kameras",
+      "Maximum number of IP-Symcon worker threads used when enabling or disabling Smart Events. Commands to each individual camera remain sequential.": "Maximale Anzahl der IP-Symcon-Worker-Threads beim Ein- oder Ausschalten von Smart Events. Die Befehle an jede einzelne Kamera bleiben sequenziell.",
+      "Delay between commands to the same camera (ms)": "Verzögerung zwischen Befehlen an dieselbe Kamera (ms)",
+      "Minimum delay in milliseconds between completed ISAPI requests sent to the same camera. Different cameras are processed in parallel.": "Mindestverzögerung in Millisekunden zwischen abgeschlossenen ISAPI-Anfragen an dieselbe Kamera. Verschiedene Kameras werden parallel verarbeitet.",
+      "Smart command retries": "Wiederholungen für Smart-Befehle",
+      "Number of retries after temporary network errors, timeouts, HTTP 408/429/5xx responses, or Hikvision deviceBusy/serviceUnavailable responses.": "Anzahl der Wiederholungen nach temporären Netzwerkfehlern, Zeitüberschreitungen, HTTP-408/429/5xx-Antworten oder Hikvision-Antworten deviceBusy/serviceUnavailable.",
+      "Maximum total time in seconds for each Smart Event camera request. Smart Event connection establishment is limited to the lower of this value or 3 seconds. Snapshot handling retains its existing timeout behavior.": "Maximale Gesamtdauer in Sekunden für jede Smart-Event-Kameraanfrage. Der Verbindungsaufbau für Smart Events ist auf den kleineren Wert aus dieser Einstellung und 3 Sekunden begrenzt. Die bestehende Timeout-Behandlung für Snapshots bleibt unverändert."
     }
+  }
 }

@@ -87,7 +87,7 @@
       "minimum": 1,
       "maximum": 60,
       "default": 10,
-      "tooltip": "Maximum time in seconds to wait for a cURL connection and response from cameras. Prevents script from hanging on unresponsive cameras."
+      "tooltip": "Maximum total time in seconds for each Smart Event camera request. Smart Event connection establishment is limited to the lower of this value or 3 seconds. Snapshot handling retains its existing timeout behavior."
     },
     {
       "type": "NumberSpinner",
@@ -98,7 +98,38 @@
       "default": 3,
       "tooltip": "Number of times to retry downloading a snapshot if the camera is busy or times out (cURL error 28) or returns HTTP 503."
     },
-    { "type": "CheckBox", "name": "debug", "caption": "Debug Messages" }
+    {
+      "type": "NumberSpinner",
+      "name": "MaxParallelCameras",
+      "caption": "Maximum cameras processed in parallel",
+      "minimum": 1,
+      "maximum": 16,
+      "default": 16,
+      "tooltip": "Maximum number of IP-Symcon worker threads used when enabling or disabling Smart Events. Commands to each individual camera remain sequential."
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "SmartCommandDelayMs",
+      "caption": "Delay between commands to the same camera (ms)",
+      "minimum": 0,
+      "maximum": 5000,
+      "default": 500,
+      "tooltip": "Minimum delay in milliseconds between completed ISAPI requests sent to the same camera. Different cameras are processed in parallel."
+    },
+    {
+      "type": "NumberSpinner",
+      "name": "SmartCommandRetryCount",
+      "caption": "Smart command retries",
+      "minimum": 0,
+      "maximum": 5,
+      "default": 2,
+      "tooltip": "Number of retries after temporary network errors, timeouts, HTTP 408/429/5xx responses, or Hikvision deviceBusy/serviceUnavailable responses."
+    },
+    {
+      "type": "CheckBox",
+      "name": "debug",
+      "caption": "Debug Messages"
+    }
   ],
   "actions": [],
   "status": [
