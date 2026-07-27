@@ -94,35 +94,65 @@ class ProcessCameraEvents extends IPSModule
 
     public function ProcessHookData()
     {
+        $runtimeVersion = '2026-07-27-01';
+
         $counter = $this->ReadAttributeInteger('counter');
         $counter = $counter + 1;
         $this->WriteAttributeInteger('counter', $counter);
+
         $debug = $this->ReadPropertyBoolean('debug');
-        if ($debug) $this->LogMessage("=======================Start of Script Webhook Processing============================" . $counter, KL_DEBUG);
+
+        if ($debug) {
+            $this->LogMessage(
+                "=======================Start of Script Webhook Processing============================" .
+                    $counter .
+                    " | RUNTIME-VERSION " .
+                    $runtimeVersion,
+                KL_DEBUG
+            );
+        }
 
         $eggTimerModuleId = $this->ReadAttributeString('EggTimerModuleId');
+
         if (!IPS_GetModule($eggTimerModuleId)) {
-            if ($debug) $this->LogMessage("Bitte erst das Egg Timer Modul aus dem Modul Store installieren", KL_ERROR);
+            if ($debug) {
+                $this->LogMessage(
+                    "Bitte erst das Egg Timer Modul aus dem Modul Store installieren",
+                    KL_ERROR
+                );
+            }
             return;
         }
 
         $webhookData = file_get_contents("php://input", true);
+
         if ($webhookData !== "") {
-            if ($debug) $this->LogMessage("Webhook has delivered File Data", KL_DEBUG);
+            if ($debug) {
+                $this->LogMessage(
+                    "Webhook has delivered File Data",
+                    KL_DEBUG
+                );
+            }
+
             $motionData = $this->parseEventNotificationAlert($webhookData);
+
             if (is_array($motionData)) {
-                if ($debug) $this->LogMessage("File Data" . $counter . " XML Parser hat ein Array zurückgegeben. Weitere Verarbeitung möglich", KL_DEBUG);
-                if ($debug) $this->LogMessage("File Data" . $counter . " Hier ist das Array " . implode(" ", $motionData), KL_DEBUG);
-                if (($motionData['eventType'] ?? '') === 'duration' && !$this->ReadPropertyBoolean('ProcessDurationEvents')) {
-                    if ($debug) $this->LogMessage("File Data" . $counter . " Duration event ignored by configuration", KL_DEBUG);
-                } else {
-                    $this->handleMotionData($motionData, "File Data" . $counter);
-                }
-            } else {
                 if ($debug) {
                     $this->LogMessage(
-                        "RUNTIME-VERSION 2026-07-27-01 | File Data" . $counter .
-                            " | motionData=" .
+                        "File Data" .
+                            $counter .
+                            " XML Parser hat ein Array zurückgegeben. Weitere Verarbeitung möglich",
+                        KL_DEBUG
+                    );
+                }
+
+                if ($debug) {
+                    $this->LogMessage(
+                        "RUNTIME-VERSION " .
+                            $runtimeVersion .
+                            " | File Data" .
+                            $counter .
+                            " Hier ist das Array " .
                             json_encode(
                                 $motionData,
                                 JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
@@ -130,32 +160,138 @@ class ProcessCameraEvents extends IPSModule
                         KL_DEBUG
                     );
                 }
+
+                if (
+                    ($motionData['eventType'] ?? '') === 'duration'
+                    && !$this->ReadPropertyBoolean('ProcessDurationEvents')
+                ) {
+                    if ($debug) {
+                        $this->LogMessage(
+                            "File Data" .
+                                $counter .
+                                " Duration event ignored by configuration",
+                            KL_DEBUG
+                        );
+                    }
+                } else {
+                    $this->handleMotionData(
+                        $motionData,
+                        "File Data" . $counter
+                    );
+                }
+            } else {
+                if ($debug) {
+                    $this->LogMessage(
+                        "File Data" .
+                            $counter .
+                            " XML Parser hat kein Array zurückgeliefert, daher keine weitere Verarbeitung möglich ",
+                        KL_DEBUG
+                    );
+                }
             }
         } elseif (is_array($_POST)) {
-            if ($debug) $this->LogMessage("Post Data" . $counter . " Webhook has delivered Post Data", KL_DEBUG);
-            if ($debug) $this->LogMessage("Post Data" . $counter . " Array " . implode(" ", $_POST), KL_DEBUG);
+            if ($debug) {
+                $this->LogMessage(
+                    "Post Data" .
+                        $counter .
+                        " Webhook has delivered Post Data",
+                    KL_DEBUG
+                );
+            }
+
+            if ($debug) {
+                $this->LogMessage(
+                    "Post Data" .
+                        $counter .
+                        " Array " .
+                        implode(" ", $_POST),
+                    KL_DEBUG
+                );
+            }
+
             if (implode(" ", $_POST) == "") {
-                if ($debug) $this->LogMessage("Post Data" . $counter . " Array Empty", KL_DEBUG);
+                if ($debug) {
+                    $this->LogMessage(
+                        "Post Data" .
+                            $counter .
+                            " Array Empty",
+                        KL_DEBUG
+                    );
+                }
             } else {
                 foreach ($_POST as $value => $content) {
-                    if ($debug) $this->LogMessage("Post Data" . $counter . " Value : " . $value, KL_DEBUG);
-                    if ($debug) $this->LogMessage("Post Data" . $counter . " Content : " . $content, KL_DEBUG);
+                    if ($debug) {
+                        $this->LogMessage(
+                            "Post Data" .
+                                $counter .
+                                " Value : " .
+                                $value,
+                            KL_DEBUG
+                        );
+                    }
+
+                    if ($debug) {
+                        $this->LogMessage(
+                            "Post Data" .
+                                $counter .
+                                " Content : " .
+                                $content,
+                            KL_DEBUG
+                        );
+                    }
+
                     $motionData = $this->parseEventNotificationAlert($content);
+
                     // The original code called handleMotionData twice, consolidating to once
                     // if(array_key_exists('channelName',$motionData)){ if($motionData['channelName'] != ""){ $this->handleMotionData($motionData, "Post Data". $counter);}}
+
                     if (!is_array($motionData)) {
-                        if ($debug) $this->LogMessage("Post Data" . $counter . " XML Parser hat kein Array zurückgeliefert, daher keine weitere Verarbeitung möglich", KL_DEBUG);
-                    } elseif (($motionData['eventType'] ?? '') === 'duration' && !$this->ReadPropertyBoolean('ProcessDurationEvents')) {
-                        if ($debug) $this->LogMessage("Post Data" . $counter . " Duration event ignored by configuration", KL_DEBUG);
+                        if ($debug) {
+                            $this->LogMessage(
+                                "Post Data" .
+                                    $counter .
+                                    " XML Parser hat kein Array zurückgeliefert, daher keine weitere Verarbeitung möglich",
+                                KL_DEBUG
+                            );
+                        }
+                    } elseif (
+                        ($motionData['eventType'] ?? '') === 'duration'
+                        && !$this->ReadPropertyBoolean('ProcessDurationEvents')
+                    ) {
+                        if ($debug) {
+                            $this->LogMessage(
+                                "Post Data" .
+                                    $counter .
+                                    " Duration event ignored by configuration",
+                                KL_DEBUG
+                            );
+                        }
                     } else {
-                        $this->handleMotionData($motionData, "Post Data" . $counter);
+                        $this->handleMotionData(
+                            $motionData,
+                            "Post Data" . $counter
+                        );
                     }
                 }
             }
         } else {
-            if ($debug) $this->LogMessage("Error Not expected Webhook Data", KL_ERROR);
+            if ($debug) {
+                $this->LogMessage(
+                    "Error Not expected Webhook Data",
+                    KL_ERROR
+                );
+            }
         }
-        if ($debug) $this->LogMessage("=======================END of Script Webhook Processing============================" . $counter, KL_DEBUG);
+
+        if ($debug) {
+            $this->LogMessage(
+                "=======================END of Script Webhook Processing============================" .
+                    $counter .
+                    " | RUNTIME-VERSION " .
+                    $runtimeVersion,
+                KL_DEBUG
+            );
+        }
     }
 
     private function handleMotionData($motionData, $source)
