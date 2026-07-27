@@ -119,7 +119,16 @@ class ProcessCameraEvents extends IPSModule
                     $this->handleMotionData($motionData, "File Data" . $counter);
                 }
             } else {
-                if ($debug) $this->LogMessage("File Data" . $counter . " XML Parser hat kein Array zurückgeliefert, daher keine weitere Verarbeitung möglich ", KL_DEBUG);
+                if ($debug) {
+                    $this->LogMessage(
+                        "File Data" . $counter . " Hier ist das Array " .
+                            json_encode(
+                                $motionData,
+                                JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                            ),
+                        KL_DEBUG
+                    );
+                }
             }
         } elseif (is_array($_POST)) {
             if ($debug) $this->LogMessage("Post Data" . $counter . " Webhook has delivered Post Data", KL_DEBUG);
