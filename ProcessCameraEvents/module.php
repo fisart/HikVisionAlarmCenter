@@ -121,7 +121,8 @@ class ProcessCameraEvents extends IPSModule
             } else {
                 if ($debug) {
                     $this->LogMessage(
-                        "File Data" . $counter . " Hier ist das Array " .
+                        "RUNTIME-VERSION 2026-07-27-01 | File Data" . $counter .
+                            " | motionData=" .
                             json_encode(
                                 $motionData,
                                 JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
