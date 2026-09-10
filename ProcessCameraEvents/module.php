@@ -1,5 +1,5 @@
 <?php
-// Version 1.6.2 (adds Notify Surveillance Center linkage when enabling Smart Events)
+// Version 1.6.3 (optional suppression of Illegal Login surveillance-center linkage)
 class ProcessCameraEvents extends IPSModule
 {
 
@@ -26,6 +26,7 @@ class ProcessCameraEvents extends IPSModule
         $this->RegisterPropertyInteger('MaxParallelCameras', 16);
         $this->RegisterPropertyInteger('SmartCommandDelayMs', 500);
         $this->RegisterPropertyInteger('SmartCommandRetryCount', 2);
+        $this->RegisterPropertyBoolean('DisableIllegalLoginSurveillanceCenter', false);
         $this->RegisterAttributeInteger('counter', '0');
         $this->RegisterAttributeString('EggTimerModuleId', '{17843F0A-BFC8-A4BA-E219-A2D10FC8E5BE}');
 
@@ -502,6 +503,7 @@ class ProcessCameraEvents extends IPSModule
                 'delayMs'       => max(0, min(5000, $this->ReadPropertyInteger('SmartCommandDelayMs'))),
                 'retryCount'    => max(0, min(5, $this->ReadPropertyInteger('SmartCommandRetryCount'))),
                 'curlTimeout'   => max(1, min(60, $this->ReadPropertyInteger('CurlTimeout'))),
+                'disableIllegalLoginCenter' => $this->ReadPropertyBoolean('DisableIllegalLoginSurveillanceCenter'),
                 'debug'         => $this->ReadPropertyBoolean('debug')
             ];
 

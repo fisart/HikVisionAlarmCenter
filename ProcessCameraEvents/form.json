@@ -127,6 +127,13 @@
     },
     {
       "type": "CheckBox",
+      "name": "DisableIllegalLoginSurveillanceCenter",
+      "caption": "Disable Notify Surveillance Center for Illegal Login",
+      "default": false,
+      "tooltip": "When all cameras are activated, remove only the center linkage from the Hikvision illaccess (Illegal Login) trigger. Illegal Login protection and all other linkage methods remain unchanged. If disabled, the module does not change the Illegal Login linkage."
+    },
+    {
+      "type": "CheckBox",
       "name": "debug",
       "caption": "Debug Messages"
     }
