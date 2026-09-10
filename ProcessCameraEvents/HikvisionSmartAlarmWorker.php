@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Isolated Smart Event worker for ProcessCameraEvents v1.6.2.
+ * Isolated Smart Event worker for ProcessCameraEvents v1.6.3.
  *
  * The worker performs camera cURL calls and same-camera delays outside the
  * webhook-receiving module instance. It calls the module only once, briefly,
@@ -116,6 +116,36 @@ final class HikvisionSmartAlarmWorker
 
         try {
             $lastCommandFinishedAt = 0.0;
+
+            // Optional security-noise suppression: remove only the surveillance-center
+            // linkage from the Illegal Login trigger. The Illegal Login detection/lock
+            // itself and all other linkage methods remain untouched.
+            if ($enabled && !empty($config['disableIllegalLoginCenter'])) {
+                $illegalLoginResult = self::DisableCenterLinkage(
+                    $ip,
+                    $username,
+                    $password,
+                    'illaccess',
+                    $runId,
+                    $lastCommandFinishedAt,
+                    $config
+                );
+                $illegalLoginResult['path'] = 'Event/triggers/illaccess';
+                $cameraResult['paths'][] = $illegalLoginResult;
+
+                $illegalLoginStatus = (string) ($illegalLoginResult['status'] ?? 'failed');
+                if ($illegalLoginStatus === 'cancelled') {
+                    $cameraResult['status'] = 'cancelled';
+                    return $cameraResult;
+                }
+                if ($illegalLoginStatus === 'failed') {
+                    $cameraResult['status'] = 'failed';
+                    if (!empty($illegalLoginResult['stopCamera'])) {
+                        return $cameraResult;
+                    }
+                }
+            }
+
             $paths = [
                 'Smart/FieldDetection',
                 'Smart/LineDetection',
@@ -631,6 +661,230 @@ final class HikvisionSmartAlarmWorker
         ];
     }
 
+    /**
+     * Removes the Hikvision linkage method "Notify Surveillance Center"
+     * from the selected EventTrigger while preserving every other linkage.
+     * Used for the Illegal Login trigger (illaccess) only when explicitly
+     * enabled in the module configuration.
+     */
+    private static function DisableCenterLinkage(
+        string $ip,
+        string $username,
+        string $password,
+        string $triggerId,
+        string $runId,
+        float &$lastCommandFinishedAt,
+        array $config
+    ): array {
+        $retryCount = max(0, min(5, (int) ($config['retryCount'] ?? 2)));
+        $maxAttempts = $retryCount + 1;
+        $triggerPath = 'Event/triggers/' . rawurlencode($triggerId);
+        $lastMessage = 'Unknown linkage error.';
+
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            if (!self::IsRunCurrent($config, $runId)) {
+                return [
+                    'status'   => 'cancelled',
+                    'attempts' => $attempt - 1,
+                    'message'  => 'Operation cancelled.'
+                ];
+            }
+
+            $getResult = self::ExecuteRequest(
+                'GET',
+                $ip,
+                $username,
+                $password,
+                $triggerPath,
+                null,
+                $runId,
+                $lastCommandFinishedAt,
+                $config
+            );
+
+            if (!$getResult['success']) {
+                if ($getResult['cancelled']) {
+                    return [
+                        'status'   => 'cancelled',
+                        'attempts' => $attempt - 1,
+                        'message'  => 'Operation cancelled.'
+                    ];
+                }
+
+                if ($getResult['unsupported']) {
+                    return [
+                        'status'   => 'unsupported',
+                        'attempts' => $attempt,
+                        'message'  => 'Illegal Login EventTrigger is not supported by this camera.'
+                    ];
+                }
+
+                $lastMessage = 'GET Illegal Login EventTrigger failed: ' . $getResult['message'];
+                if ($getResult['temporary'] && $attempt < $maxAttempts) {
+                    if (!self::WaitForRetry($attempt, $runId, $config)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                return [
+                    'status'     => 'failed',
+                    'attempts'   => $attempt,
+                    'message'    => $lastMessage,
+                    'stopCamera' => self::ShouldStopCameraAfterRequestFailure($getResult)
+                ];
+            }
+
+            $hasCenter = self::HasCenterNotification($getResult['body']);
+            if ($hasCenter === null) {
+                return [
+                    'status'   => 'unsupported',
+                    'attempts' => $attempt,
+                    'message'  => 'Illegal Login EventTrigger has no usable notification list.'
+                ];
+            }
+
+            if (!$hasCenter) {
+                return [
+                    'status'   => 'success',
+                    'attempts' => $attempt,
+                    'message'  => 'Notify Surveillance Center already disabled for Illegal Login.'
+                ];
+            }
+
+            try {
+                $modifiedTriggerXml = self::RemoveCenterNotification($getResult['body']);
+            } catch (Throwable $e) {
+                return [
+                    'status'   => 'failed',
+                    'attempts' => $attempt,
+                    'message'  => $e->getMessage()
+                ];
+            }
+
+            $putResult = self::ExecuteRequest(
+                'PUT',
+                $ip,
+                $username,
+                $password,
+                $triggerPath,
+                $modifiedTriggerXml,
+                $runId,
+                $lastCommandFinishedAt,
+                $config
+            );
+
+            if (!$putResult['success']) {
+                if ($putResult['cancelled']) {
+                    return [
+                        'status'   => 'cancelled',
+                        'attempts' => $attempt,
+                        'message'  => 'Operation cancelled.'
+                    ];
+                }
+
+                if ($putResult['unsupported']) {
+                    return [
+                        'status'   => 'unsupported',
+                        'attempts' => $attempt,
+                        'message'  => 'Illegal Login linkage cannot be changed on this camera.'
+                    ];
+                }
+
+                $lastMessage = 'PUT Illegal Login EventTrigger failed: ' . $putResult['message'];
+                if ($putResult['temporary'] && $attempt < $maxAttempts) {
+                    if (!self::WaitForRetry($attempt, $runId, $config)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                return [
+                    'status'     => 'failed',
+                    'attempts'   => $attempt,
+                    'message'    => $lastMessage,
+                    'stopCamera' => self::ShouldStopCameraAfterRequestFailure($putResult)
+                ];
+            }
+
+            $responseStatus = self::ParseResponseStatus($putResult['body']);
+            if ($responseStatus['present'] && !$responseStatus['success']) {
+                if ($responseStatus['unsupported']) {
+                    return [
+                        'status'   => 'unsupported',
+                        'attempts' => $attempt,
+                        'message'  => 'Illegal Login linkage is not supported: ' . $responseStatus['message']
+                    ];
+                }
+
+                $lastMessage = 'Camera rejected Illegal Login EventTrigger PUT: ' . $responseStatus['message'];
+                if ($responseStatus['temporary'] && $attempt < $maxAttempts) {
+                    if (!self::WaitForRetry($attempt, $runId, $config)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                return [
+                    'status'   => 'failed',
+                    'attempts' => $attempt,
+                    'message'  => $lastMessage
+                ];
+            }
+
+            $verifyResult = self::ExecuteRequest(
+                'GET',
+                $ip,
+                $username,
+                $password,
+                $triggerPath,
+                null,
+                $runId,
+                $lastCommandFinishedAt,
+                $config
+            );
+
+            if (!$verifyResult['success']) {
+                $lastMessage = 'Illegal Login linkage verification GET failed: ' . $verifyResult['message'];
+                if ($verifyResult['temporary'] && $attempt < $maxAttempts) {
+                    if (!self::WaitForRetry($attempt, $runId, $config)) {
+                        break;
+                    }
+                    continue;
+                }
+
+                return [
+                    'status'     => 'failed',
+                    'attempts'   => $attempt,
+                    'message'    => $lastMessage,
+                    'stopCamera' => self::ShouldStopCameraAfterRequestFailure($verifyResult)
+                ];
+            }
+
+            if (self::HasCenterNotification($verifyResult['body']) === false) {
+                self::Debug($config, "Verified Notify Surveillance Center disabled for Illegal Login on IP $ip.");
+                return [
+                    'status'   => 'success',
+                    'attempts' => $attempt,
+                    'message'  => 'Notify Surveillance Center disabled and verified for Illegal Login.'
+                ];
+            }
+
+            $lastMessage = 'Illegal Login linkage verification mismatch: notificationMethod=center is still present.';
+            if ($attempt < $maxAttempts) {
+                if (!self::WaitForRetry($attempt, $runId, $config)) {
+                    break;
+                }
+            }
+        }
+
+        return [
+            'status'   => 'failed',
+            'attempts' => $maxAttempts,
+            'message'  => $lastMessage
+        ];
+    }
+
     private static function HasCenterNotification(string $xmlString): ?bool
     {
         $doc = new DOMDocument();
@@ -670,6 +924,60 @@ final class HikvisionSmartAlarmWorker
         }
 
         return false;
+    }
+
+    private static function RemoveCenterNotification(string $xmlString): string
+    {
+        $doc = new DOMDocument();
+        $doc->preserveWhiteSpace = false;
+        $doc->formatOutput = true;
+        if (@$doc->loadXML($xmlString) === false) {
+            throw new RuntimeException('Failed to parse EventTrigger XML.');
+        }
+
+        $xpath = new DOMXPath($doc);
+        $notificationLists = $xpath->query('//*[local-name()="EventTriggerNotificationList"]');
+        if ($notificationLists === false || $notificationLists->length === 0) {
+            throw new RuntimeException('EventTriggerNotificationList does not exist in the EventTrigger XML.');
+        }
+
+        $notifications = $xpath->query(
+            './/*[local-name()="EventTriggerNotification"]',
+            $notificationLists->item(0)
+        );
+        if ($notifications === false) {
+            throw new RuntimeException('Failed to read EventTriggerNotification entries.');
+        }
+
+        $toRemove = [];
+        foreach ($notifications as $notification) {
+            $idNodes = $xpath->query('./*[local-name()="id"]', $notification);
+            $methodNodes = $xpath->query('./*[local-name()="notificationMethod"]', $notification);
+
+            $id = $idNodes !== false && $idNodes->length > 0
+                ? strtolower(trim((string) $idNodes->item(0)->nodeValue))
+                : '';
+            $method = $methodNodes !== false && $methodNodes->length > 0
+                ? strtolower(trim((string) $methodNodes->item(0)->nodeValue))
+                : '';
+
+            if ($id === 'center' || $method === 'center') {
+                $toRemove[] = $notification;
+            }
+        }
+
+        foreach ($toRemove as $notification) {
+            if ($notification->parentNode !== null) {
+                $notification->parentNode->removeChild($notification);
+            }
+        }
+
+        $result = $doc->saveXML();
+        if (!is_string($result)) {
+            throw new RuntimeException('Failed to serialize modified EventTrigger XML.');
+        }
+
+        return $result;
     }
 
     private static function AddCenterNotification(string $xmlString): string
