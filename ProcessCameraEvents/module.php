@@ -1,5 +1,5 @@
 <?php
-// Version 1.6.3 (optional suppression of Illegal Login surveillance-center linkage)
+// Version 1.6.4 (adds per-camera Alarm Enabled switch)
 class ProcessCameraEvents extends IPSModule
 {
 
@@ -44,6 +44,9 @@ class ProcessCameraEvents extends IPSModule
         parent::ApplyChanges();
         // Ensure the webhook is registered
         $this->RegisterHook($this->ReadPropertyString('WebhookName'));
+
+        // Ensure all existing camera objects have a per-camera alarm switch.
+        $this->EnsureCameraAlarmEnabledVariables();
     }
 
     private function RegisterHook($WebHook)
@@ -166,6 +169,14 @@ class ProcessCameraEvents extends IPSModule
             if ($debug) $this->LogMessage("Semaphore process wurde betreten  " . $semaphore_process_name, KL_DEBUG);
 
             $kameraId = $this->manageVariable($parent, $kamera_name, 0, 'Motion', true, 0, "");
+
+            // Per-camera alarm switch. Existing and newly discovered cameras default to enabled.
+            $alarmEnabledId = $this->EnsureCameraAlarmEnabledVariable($kameraId);
+            $alarmEnabled = true; // Fail-safe: if the switch cannot be read, keep alarm processing enabled.
+            if ($alarmEnabledId !== null) {
+                $alarmEnabled = GetValueBoolean($alarmEnabledId);
+            }
+
             $event_descriptionvar_id = $this->manageVariable($kameraId, $motionData['eventDescription'], 3, '~TextBox', true, 0, "");
 
             $username = GetValueString($this->manageVariable($kameraId, "User Name", 3, '~TextBox', true, 0, $username));
@@ -194,11 +205,19 @@ class ProcessCameraEvents extends IPSModule
 
             $dateTime_id = $this->manageVariable($event_descriptionvar_id, "Date and Time", 3, '~TextBox', true, 0, "");
             SetValueString($dateTime_id, $motionData['dateTime']);
-            SetValueBoolean($kameraId, true);
             $kamera_IP_var_id = $this->manageVariable($kameraId, "IP-" . $motionData['ipAddress'], 3, '~TextBox', true, 0, "");
             SetValueString($kamera_IP_var_id, $motionData['ipAddress']);
 
-            $this->handle_egg_timer($source, $kamera_name, $kameraId);
+            if ($alarmEnabled) {
+                SetValueBoolean($kameraId, true);
+                $this->handle_egg_timer($source, $kamera_name, $kameraId);
+            } else {
+                // A disabled camera must not remain in an active alarm state.
+                if (GetValueBoolean($kameraId)) {
+                    SetValueBoolean($kameraId, false);
+                }
+                if ($debug) $this->LogMessage($source . " Camera alarm disabled - webhook processed without alarm activation: " . $kamera_name, KL_DEBUG);
+            }
 
             if ($debug) $this->LogMessage("Leave process Semaphore  " . $semaphore_process_name, KL_DEBUG);
             IPS_SemaphoreLeave($semaphore_process_name);
@@ -259,6 +278,66 @@ class ProcessCameraEvents extends IPSModule
         } else {
             if ($debug) $this->LogMessage("Es wird bereits ein Egg Timer installiert Semaphore war gesetzt " . $semaphore_egg_timer_name, KL_DEBUG);
         }
+    }
+
+    private function EnsureCameraAlarmEnabledVariables(): void
+    {
+        $debug = $this->ReadPropertyBoolean('debug');
+
+        foreach (IPS_GetChildrenIDs($this->InstanceID) as $childId) {
+            $object = IPS_GetObject($childId);
+
+            // Camera objects created by this module are Boolean variables with the Motion profile.
+            if ((int) ($object['ObjectType'] ?? -1) !== 2) {
+                continue;
+            }
+
+            $variable = IPS_GetVariable($childId);
+            if ((int) ($variable['VariableType'] ?? -1) !== 0) {
+                continue;
+            }
+            if (($variable['VariableCustomProfile'] ?? '') !== 'Motion') {
+                continue;
+            }
+
+            $this->EnsureCameraAlarmEnabledVariable($childId);
+        }
+
+        if ($debug) $this->LogMessage("Per-camera Alarm Enabled variables checked", KL_DEBUG);
+    }
+
+    private function EnsureCameraAlarmEnabledVariable(int $kameraId): ?int
+    {
+        $debug = $this->ReadPropertyBoolean('debug');
+        $existingId = @IPS_GetObjectIDByName("Alarm Enabled", $kameraId);
+
+        if ($existingId !== false) {
+            $object = IPS_GetObject($existingId);
+            if ((int) ($object['ObjectType'] ?? -1) !== 2) {
+                $this->LogMessage('Object "Alarm Enabled" exists under camera ID ' . $kameraId . ' but is not a variable. Camera alarm remains enabled for safety.', KL_WARNING);
+                return null;
+            }
+
+            $variable = IPS_GetVariable($existingId);
+            if ((int) ($variable['VariableType'] ?? -1) !== 0) {
+                $this->LogMessage('Variable "Alarm Enabled" under camera ID ' . $kameraId . ' is not Boolean. Camera alarm remains enabled for safety.', KL_WARNING);
+                return null;
+            }
+
+            return $existingId;
+        }
+
+        $alarmEnabledId = IPS_CreateVariable(0);
+        IPS_SetName($alarmEnabledId, "Alarm Enabled");
+        IPS_SetParent($alarmEnabledId, $kameraId);
+        IPS_SetVariableCustomProfile($alarmEnabledId, "~Switch");
+        SetValueBoolean($alarmEnabledId, true);
+
+        if ($debug) {
+            $this->LogMessage('Created Alarm Enabled switch for camera "' . IPS_GetName($kameraId) . '". Default = true.', KL_DEBUG);
+        }
+
+        return $alarmEnabledId;
     }
 
     private function manageVariable($parent, $name, $type, $profile, $logging, $aggregationType, $initialValue)
