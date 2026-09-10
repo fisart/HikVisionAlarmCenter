@@ -1,0 +1,14 @@
+{
+    "id": "{F91E0380-7E28-403A-A3C4-DF348E87895F}",
+    "name": "HikvisionCameraConfiguration",
+    "type": 3,
+    "vendor": "Hikvision",
+    "aliases": [
+        "Hikvision Camera Configuration"
+    ],
+    "parentRequirements": [],
+    "childRequirements": [],
+    "implemented": [],
+    "prefix": "HCC",
+    "url": "https://github.com/fisart/HikVisionAlarmCenter"
+}
