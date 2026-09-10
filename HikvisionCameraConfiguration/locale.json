@@ -1,0 +1,22 @@
+{
+    "translations": {
+        "de": {
+            "Hikvision Camera Configuration": "Hikvision Kamera-Konfiguration",
+            "Configure Hikvision event linkage methods without affecting the alarm-processing module.": "Konfiguriert Hikvision-Ereignis-Verknüpfungsmethoden ohne das Alarmverarbeitungsmodul zu beeinflussen.",
+            "SecretsManager instance": "SecretsManager Instanz",
+            "SecretsManager secret name": "SecretsManager Secret-Name",
+            "Camera root object": "Kamera-Stammobjekt",
+            "Camera IP variable name contains": "Name der Kamera-IP-Variablen enthält",
+            "Camera request timeout (seconds)": "Timeout für Kamera-Anfragen (Sekunden)",
+            "Debug logging": "Debug-Protokollierung",
+            "Refresh camera configuration": "Kamerakonfiguration aktualisieren",
+            "The module creates ConfigurationHTML and an instance-specific webhook.": "Das Modul erzeugt ConfigurationHTML und einen instanzspezifischen Webhook.",
+            "Active": "Aktiv",
+            "Configuration incomplete": "Konfiguration unvollständig",
+            "Webhook conflict": "Webhook-Konflikt",
+            "All runtime defaults below are configurable. The values initially shown come from the module properties registered in Create().": "Alle unten aufgeführten Laufzeit-Standardwerte sind konfigurierbar. Die anfangs angezeigten Werte stammen aus den in Create() registrierten Moduleigenschaften.",
+            "Default values: SecretsManager instance 47118, secret name Hikvision, camera root object 11654, camera variable filter IP-192.168.50., timeout 15 seconds, debug disabled.": "Standardwerte: SecretsManager-Instanz 47118, Secret-Name Hikvision, Kamera-Stammobjekt 11654, Kamera-Variablenfilter IP-192.168.50., Timeout 15 Sekunden, Debug deaktiviert.",
+            "The module creates ConfigurationHTML and the instance-specific webhook /hook/hikvision_config_<InstanceID>.": "Das Modul erzeugt ConfigurationHTML und den instanzspezifischen Webhook /hook/hikvision_config_<InstanceID>."
+        }
+    }
+}

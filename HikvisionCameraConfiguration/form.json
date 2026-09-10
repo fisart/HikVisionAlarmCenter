@@ -1,0 +1,76 @@
+{
+    "elements": [
+        {
+            "type": "Label",
+            "caption": "Hikvision Camera Configuration"
+        },
+        {
+            "type": "Label",
+            "caption": "All runtime defaults below are configurable. The values initially shown come from the module properties registered in Create()."
+        },
+        {
+            "type": "SelectInstance",
+            "name": "SecretsManagerInstanceID",
+            "caption": "SecretsManager instance"
+        },
+        {
+            "type": "ValidationTextBox",
+            "name": "SecretName",
+            "caption": "SecretsManager secret name"
+        },
+        {
+            "type": "SelectObject",
+            "name": "CameraRootID",
+            "caption": "Camera root object"
+        },
+        {
+            "type": "ValidationTextBox",
+            "name": "CameraVariableNameContains",
+            "caption": "Camera IP variable name contains"
+        },
+        {
+            "type": "NumberSpinner",
+            "name": "CurlTimeout",
+            "caption": "Camera request timeout (seconds)",
+            "minimum": 1,
+            "maximum": 60
+        },
+        {
+            "type": "CheckBox",
+            "name": "Debug",
+            "caption": "Debug logging"
+        },
+        {
+            "type": "Label",
+            "caption": "Default values: SecretsManager instance 47118, secret name Hikvision, camera root object 11654, camera variable filter IP-192.168.50., timeout 15 seconds, debug disabled."
+        }
+    ],
+    "actions": [
+        {
+            "type": "Button",
+            "caption": "Refresh camera configuration",
+            "onClick": "HCC_RefreshConfiguration($id);"
+        },
+        {
+            "type": "Label",
+            "caption": "The module creates ConfigurationHTML and the instance-specific webhook /hook/hikvision_config_<InstanceID>."
+        }
+    ],
+    "status": [
+        {
+            "code": 102,
+            "icon": "active",
+            "caption": "Active"
+        },
+        {
+            "code": 201,
+            "icon": "error",
+            "caption": "Configuration incomplete"
+        },
+        {
+            "code": 202,
+            "icon": "error",
+            "caption": "Webhook conflict"
+        }
+    ]
+}
