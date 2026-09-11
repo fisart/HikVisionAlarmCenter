@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Optional NVR evidence support for ProcessCameraEvents v1.6.8.
+ * Optional NVR evidence support for ProcessCameraEvents v1.6.9.
  *
  * Evidence capture is disabled by default. Mapping configuration deliberately
  * avoids relying on persistence of dynamic List rows because some IP-Symcon
@@ -9,10 +9,11 @@
  * source of truth, a module buffer is the working copy, and explicit Save
  * buttons commit a healed full mapping to the persistent property.
  *
- * Evidence timing deliberately uses the IP-Symcon webhook request start time
- * instead of the Hikvision camera timestamp. Some cameras report incorrect
- * timezone offsets even when their displayed local clock is correct. The
- * original camera timestamp is still stored unchanged in the camera event tree.
+ * Hikvision historical RTSP playback on the target NVR expects the recorder's
+ * local wall-clock value even though the query uses a trailing Z. Therefore the
+ * camera supplied local date/time is used for evidence timing, while its
+ * timezone suffix is deliberately ignored for the RTSP request. The original
+ * camera timestamp is still stored unchanged in the camera event tree.
  */
 trait HikvisionEvidenceSupport
 {
@@ -367,18 +368,18 @@ trait HikvisionEvidenceSupport
     }
 
     /**
-     * Returns the UTC timestamp from the start of the current webhook request.
-     * IP-Symcon exposes PHP's REQUEST_TIME for webhook processing. Falling back
-     * to time() keeps non-webhook/manual invocations safe.
+     * Hikvision historical RTSP on this NVR expects the local recorder
+     * wall-clock value with a trailing Z. Keep the YYYY-MM-DDTHH:MM:SS part
+     * supplied by the camera and deliberately discard its timezone suffix.
      */
-    private function GetEvidenceRequestTimeUtc(): string
+    private function NormalizeEvidenceCameraTime(string $cameraTimestamp): ?string
     {
-        $timestamp = isset($_SERVER['REQUEST_TIME']) ? (int) $_SERVER['REQUEST_TIME'] : 0;
-        if ($timestamp <= 0) {
-            $timestamp = time();
+        $cameraTimestamp = trim($cameraTimestamp);
+        if (!preg_match('/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2})?$/i', $cameraTimestamp, $matches)) {
+            return null;
         }
 
-        return gmdate('Y-m-d\TH:i:s\Z', $timestamp);
+        return $matches[1] . 'Z';
     }
 
     private function DispatchEvidenceRequest(int $kameraId, string $cameraName, array $motionData): void
@@ -402,17 +403,20 @@ trait HikvisionEvidenceSupport
             return;
         }
 
-        // Do not use the camera supplied dateTime here. Some Hikvision devices
-        // report a wrong timezone offset even though their displayed clock is
-        // correct. REQUEST_TIME is the time IP-Symcon started processing this
-        // webhook, before snapshot download/retries can delay evidence dispatch.
-        $eventTime = $this->GetEvidenceRequestTimeUtc();
+        $cameraReportedTime = trim((string) ($motionData['dateTime'] ?? ''));
+        $eventTime = $this->NormalizeEvidenceCameraTime($cameraReportedTime);
+        if ($eventTime === null) {
+            $this->LogMessage(
+                'NVR evidence skipped for camera "' . $cameraName . '": camera timestamp is missing or invalid.',
+                KL_WARNING
+            );
+            return;
+        }
 
         if ($this->ReadPropertyBoolean('debug')) {
-            $cameraReportedTime = trim((string) ($motionData['dateTime'] ?? ''));
             $this->LogMessage(
-                'NVR evidence time for camera "' . $cameraName . '": Symcon webhook UTC=' . $eventTime .
-                ($cameraReportedTime !== '' ? ', camera reported=' . $cameraReportedTime : ''),
+                'NVR evidence time for camera "' . $cameraName . '": camera reported=' . $cameraReportedTime .
+                ', NVR wall-clock request=' . $eventTime,
                 KL_DEBUG
             );
         }
