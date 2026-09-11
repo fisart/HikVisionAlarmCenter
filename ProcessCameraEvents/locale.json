@@ -18,7 +18,18 @@
       "Number of retries after temporary network errors, timeouts, HTTP 408/429/5xx responses, or Hikvision deviceBusy/serviceUnavailable responses.": "Anzahl der Wiederholungen nach temporären Netzwerkfehlern, Zeitüberschreitungen, HTTP-408/429/5xx-Antworten oder Hikvision-Antworten deviceBusy/serviceUnavailable.",
       "Maximum total time in seconds for each Smart Event camera request. Smart Event connection establishment is limited to the lower of this value or 3 seconds. Snapshot handling retains its existing timeout behavior.": "Maximale Gesamtdauer in Sekunden für jede Smart-Event-Kameraanfrage. Der Verbindungsaufbau für Smart Events ist auf den kleineren Wert aus dieser Einstellung und 3 Sekunden begrenzt. Die bestehende Timeout-Behandlung für Snapshots bleibt unverändert.",
       "Disable Notify Surveillance Center for Illegal Login": "Benachrichtigung an Überwachungszentrale bei illegaler Anmeldung deaktivieren",
-      "When all cameras are activated, remove only the center linkage from the Hikvision illaccess (Illegal Login) trigger. Illegal Login protection and all other linkage methods remain unchanged. If disabled, the module does not change the Illegal Login linkage.": "Beim Aktivieren aller Kameras wird nur die center-Verknüpfung des Hikvision-Triggers illaccess (illegale Anmeldung) entfernt. Der Schutz vor illegalen Anmeldungen und alle anderen Verknüpfungsmethoden bleiben unverändert. Ist die Option deaktiviert, ändert das Modul die Verknüpfung für illegale Anmeldungen nicht."
+      "When all cameras are activated, remove only the center linkage from the Hikvision illaccess (Illegal Login) trigger. Illegal Login protection and all other linkage methods remain unchanged. If disabled, the module does not change the Illegal Login linkage.": "Beim Aktivieren aller Kameras wird nur die center-Verknüpfung des Hikvision-Triggers illaccess (illegale Anmeldung) entfernt. Der Schutz vor illegalen Anmeldungen und alle anderen Verknüpfungsmethoden bleiben unverändert. Ist die Option deaktiviert, ändert das Modul die Verknüpfung für illegale Anmeldungen nicht.",
+      "Enable NVR evidence recording": "NVR-Beweisaufzeichnung aktivieren",
+      "Optional. Requests a short historical recording from an external evidence service when a camera starts a new alarm cycle. The alarm itself never waits for the evidence service.": "Optional. Fordert eine kurze historische Aufnahme von einem externen Evidence-Dienst an, wenn eine Kamera einen neuen Alarmzyklus startet. Der Alarm selbst wartet niemals auf den Evidence-Dienst.",
+      "NVR Evidence Recording": "NVR-Beweisaufzeichnung",
+      "Evidence Service URL": "Evidence-Service-URL",
+      "Base URL of the external evidence service, for example http://192.168.x.x:8765. Leave empty when evidence recording is not used.": "Basis-URL des externen Evidence-Dienstes, zum Beispiel http://192.168.x.x:8765. Leer lassen, wenn die Beweisaufzeichnung nicht verwendet wird.",
+      "Seconds before alarm event": "Sekunden vor dem Alarmereignis",
+      "Seconds after alarm event": "Sekunden nach dem Alarmereignis",
+      "Camera to NVR channel mapping": "Zuordnung Kamera zu NVR-Kanal",
+      "Camera": "Kamera",
+      "NVR Channel": "NVR-Kanal",
+      "Main-stream track IDs are calculated as NVR channel x 100 + 1 (for example D1 = 101, D3 = 301). Evidence is requested only on the first alarm event of a new camera alarm cycle.": "Die Main-Stream-Track-ID wird als NVR-Kanal x 100 + 1 berechnet (zum Beispiel D1 = 101, D3 = 301). Evidence wird nur beim ersten Alarmereignis eines neuen Kamera-Alarmzyklus angefordert."
     }
   }
 }
