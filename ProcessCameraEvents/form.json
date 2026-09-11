@@ -157,18 +157,20 @@
         {
           "type": "NumberSpinner",
           "name": "EvidenceBeforeSeconds",
-          "caption": "Seconds before alarm event",
+          "caption": "Seconds before event",
           "minimum": 0,
-          "maximum": 300,
-          "default": 15
+          "maximum": 60,
+          "default": 15,
+          "tooltip": "How many seconds before the camera event the evidence clip should start."
         },
         {
           "type": "NumberSpinner",
           "name": "EvidenceAfterSeconds",
-          "caption": "Seconds after alarm event",
-          "minimum": 0,
-          "maximum": 300,
-          "default": 0
+          "caption": "Clip length (seconds)",
+          "minimum": 1,
+          "maximum": 60,
+          "default": 20,
+          "tooltip": "Total evidence clip length. Example: 15 seconds before event and a 20 second clip produces approximately 15 seconds before plus 5 seconds after the event. The evidence worker automatically waits for the post-event portion plus a 10 second NVR indexing safety margin before requesting the clip."
         },
         {
           "type": "List",
