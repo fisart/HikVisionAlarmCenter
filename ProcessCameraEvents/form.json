@@ -170,7 +170,7 @@
           "minimum": 1,
           "maximum": 60,
           "default": 20,
-          "tooltip": "Total evidence clip length. Example: 15 seconds before event and a 20 second clip produces approximately 15 seconds before plus 5 seconds after the event. The evidence worker automatically waits for the post-event portion plus a 10 second NVR indexing safety margin before requesting the clip."
+          "tooltip": "Total evidence clip length. Example: 15 seconds before event and a 20 second clip produces approximately 15 seconds before plus 5 seconds after the event. The evidence worker automatically waits for the post-event portion plus a 30 second NVR indexing safety margin before requesting the clip."
         },
         {
           "type": "List",
