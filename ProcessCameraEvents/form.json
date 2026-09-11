@@ -177,7 +177,15 @@
           "rowCount": 16,
           "add": false,
           "delete": false,
+          "loadValuesFromConfiguration": false,
           "columns": [
+            {
+              "caption": "Camera ID",
+              "name": "CameraID",
+              "width": "0px",
+              "visible": false,
+              "save": true
+            },
             {
               "caption": "Camera",
               "name": "Camera",
