@@ -6,6 +6,11 @@
  * The worker performs one bounded POST to the evidence service and then calls
  * back into the module briefly with the accepted job metadata. It never handles
  * camera credentials and never performs NVR/RTSP work itself.
+ *
+ * A short delay is applied before the POST so the NVR has time to finalize and
+ * index the recording segment around the just-received alarm event. The delay
+ * happens only in this isolated worker and therefore does not delay the alarm
+ * webhook path itself.
  */
 final class HikvisionEvidenceRequestWorker
 {
@@ -33,9 +38,17 @@ final class HikvisionEvidenceRequestWorker
             $eventTime = trim((string) ($config['eventTime'] ?? ''));
             $before = max(0, min(300, (int) ($config['before'] ?? 15)));
             $after = max(0, min(300, (int) ($config['after'] ?? 0)));
+            $delaySeconds = max(0, min(60, (int) ($config['delaySeconds'] ?? 15)));
 
             if ($instanceId <= 0 || $cameraId <= 0 || $serviceUrl === '' || $cameraName === '' || $track <= 0 || $eventTime === '') {
                 throw new RuntimeException('Evidence worker data is incomplete.');
+            }
+
+            // Let the NVR finish/index the most recent recording segment before
+            // asking the evidence service for historical playback around the
+            // alarm timestamp. This worker is isolated from the alarm webhook.
+            if ($delaySeconds > 0) {
+                sleep($delaySeconds);
             }
 
             $payload = json_encode([
