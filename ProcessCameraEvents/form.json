@@ -181,12 +181,14 @@
             {
               "caption": "Camera",
               "name": "Camera",
-              "width": "260px"
+              "width": "260px",
+              "save": true
             },
             {
               "caption": "IP Address",
               "name": "IPAddress",
-              "width": "180px"
+              "width": "180px",
+              "save": true
             },
             {
               "caption": "NVR Channel",
