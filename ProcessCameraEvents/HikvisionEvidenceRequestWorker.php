@@ -18,7 +18,7 @@ final class HikvisionEvidenceRequestWorker
 {
     private const DEFAULT_CLIP_LENGTH_SECONDS = 20;
     private const MAX_CLIP_LENGTH_SECONDS = 60;
-    private const NVR_INDEX_SAFETY_SECONDS = 10;
+    private const NVR_INDEX_SAFETY_SECONDS = 30;
 
     public static function Run(string $workerDataJson): void
     {
@@ -61,7 +61,7 @@ final class HikvisionEvidenceRequestWorker
 
             // Do not query historical playback until the complete requested
             // post-event section should have been recorded, then allow the NVR
-            // a further ten seconds to finalize/index the segment.
+            // a further thirty seconds to finalize/index the segment.
             $delaySeconds = $after + self::NVR_INDEX_SAFETY_SECONDS;
 
             if ($instanceId <= 0 || $cameraId <= 0 || $serviceUrl === '' || $cameraName === '' || $track <= 0 || $eventTime === '') {
