@@ -9,16 +9,15 @@
  *
  * EvidenceAfterSeconds is retained as the internal property name for backwards
  * compatibility, but the configuration form exposes it as the total clip
- * length. From that value the worker derives the post-event recording time and
- * waits long enough for that part of the NVR recording to exist, plus a small
- * safety margin. The wait happens only in this isolated worker and therefore
- * does not delay the alarm webhook path itself.
+ * length. From that value the worker derives the post-event recording time.
+ * The evidence request is queued immediately; all waiting, retry and NVR busy
+ * handling is deliberately owned by the external evidence service so the
+ * IP-Symcon alarm path never waits for NVR playback availability.
  */
 final class HikvisionEvidenceRequestWorker
 {
     private const DEFAULT_CLIP_LENGTH_SECONDS = 20;
     private const MAX_CLIP_LENGTH_SECONDS = 60;
-    private const NVR_INDEX_SAFETY_SECONDS = 30;
 
     public static function Run(string $workerDataJson): void
     {
@@ -59,17 +58,8 @@ final class HikvisionEvidenceRequestWorker
             $clipLength = max($before, $requestedClipLength);
             $after = max(0, $clipLength - $before);
 
-            // Do not query historical playback until the complete requested
-            // post-event section should have been recorded, then allow the NVR
-            // a further thirty seconds to finalize/index the segment.
-            $delaySeconds = $after + self::NVR_INDEX_SAFETY_SECONDS;
-
             if ($instanceId <= 0 || $cameraId <= 0 || $serviceUrl === '' || $cameraName === '' || $track <= 0 || $eventTime === '') {
                 throw new RuntimeException('Evidence worker data is incomplete.');
-            }
-
-            if ($delaySeconds > 0) {
-                sleep($delaySeconds);
             }
 
             $payload = json_encode([
