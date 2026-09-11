@@ -19,11 +19,22 @@ trait HikvisionEvidenceSupport
         }
 
         $visible = $this->ReadPropertyBoolean('EnableEvidenceRecording');
+        $cameraRows = $this->BuildEvidenceCameraRows();
+
         foreach (($form['elements'] ?? []) as $index => $element) {
-            if (($element['name'] ?? '') === 'EvidencePanel') {
-                $form['elements'][$index]['visible'] = $visible;
-                break;
+            if (($element['name'] ?? '') !== 'EvidencePanel') {
+                continue;
             }
+
+            $form['elements'][$index]['visible'] = $visible;
+
+            foreach (($element['items'] ?? []) as $itemIndex => $item) {
+                if (($item['name'] ?? '') === 'EvidenceCameraMappings') {
+                    $form['elements'][$index]['items'][$itemIndex]['values'] = $cameraRows;
+                    break;
+                }
+            }
+            break;
         }
 
         $encoded = json_encode($form);
@@ -35,13 +46,114 @@ trait HikvisionEvidenceSupport
         $this->UpdateFormField('EvidencePanel', 'visible', $enabled);
     }
 
+    /**
+     * Builds the editable NVR mapping table from camera objects that already
+     * exist below this module instance. Only NVRChannel must be entered by the
+     * user. Existing assignments are retained by IP address first, then by
+     * camera name for backwards compatibility with the first v1.6.5 format.
+     */
+    private function BuildEvidenceCameraRows(): array
+    {
+        $savedMappings = json_decode($this->ReadPropertyString('EvidenceCameraMappings'), true);
+        if (!is_array($savedMappings)) {
+            $savedMappings = [];
+        }
+
+        $channelsByIp = [];
+        $channelsByName = [];
+
+        foreach ($savedMappings as $mapping) {
+            if (!is_array($mapping)) {
+                continue;
+            }
+
+            $channel = max(0, min(99, (int) ($mapping['NVRChannel'] ?? 0)));
+            $ip = trim((string) ($mapping['IPAddress'] ?? ''));
+            $camera = trim((string) ($mapping['Camera'] ?? ''));
+
+            if ($ip !== '') {
+                $channelsByIp[$ip] = $channel;
+            }
+            if ($camera !== '') {
+                $channelsByName[strtolower($camera)] = $channel;
+            }
+        }
+
+        $rows = [];
+
+        foreach (IPS_GetChildrenIDs($this->InstanceID) as $cameraId) {
+            $object = IPS_GetObject($cameraId);
+            if ((int) ($object['ObjectType'] ?? -1) !== 2) {
+                continue;
+            }
+
+            $variable = IPS_GetVariable($cameraId);
+            if ((int) ($variable['VariableType'] ?? -1) !== 0) {
+                continue;
+            }
+            if (($variable['VariableCustomProfile'] ?? '') !== 'Motion') {
+                continue;
+            }
+
+            $cameraName = IPS_GetName($cameraId);
+            $ipAddress = $this->GetEvidenceCameraIpAddress($cameraId);
+
+            $channel = 0;
+            if ($ipAddress !== '' && array_key_exists($ipAddress, $channelsByIp)) {
+                $channel = $channelsByIp[$ipAddress];
+            } else {
+                $nameKey = strtolower($cameraName);
+                if (array_key_exists($nameKey, $channelsByName)) {
+                    $channel = $channelsByName[$nameKey];
+                }
+            }
+
+            $rows[] = [
+                'Camera'     => $cameraName,
+                'IPAddress'  => $ipAddress,
+                'NVRChannel' => $channel
+            ];
+        }
+
+        usort($rows, static function (array $left, array $right): int {
+            return strnatcasecmp((string) ($left['Camera'] ?? ''), (string) ($right['Camera'] ?? ''));
+        });
+
+        return $rows;
+    }
+
+    private function GetEvidenceCameraIpAddress(int $cameraId): string
+    {
+        foreach (IPS_GetChildrenIDs($cameraId) as $childId) {
+            $object = IPS_GetObject($childId);
+            if ((int) ($object['ObjectType'] ?? -1) !== 2) {
+                continue;
+            }
+
+            $variable = IPS_GetVariable($childId);
+            if ((int) ($variable['VariableType'] ?? -1) !== 3) {
+                continue;
+            }
+
+            $name = IPS_GetName($childId);
+            if (strpos($name, 'IP-') !== 0) {
+                continue;
+            }
+
+            return trim((string) GetValueString($childId));
+        }
+
+        return '';
+    }
+
     private function DispatchEvidenceRequest(int $kameraId, string $cameraName, array $motionData): void
     {
         if (!$this->ReadPropertyBoolean('EnableEvidenceRecording')) {
             return;
         }
 
-        $nvrChannel = $this->GetEvidenceNvrChannelForCamera($cameraName);
+        $cameraIp = trim((string) ($motionData['ipAddress'] ?? ''));
+        $nvrChannel = $this->GetEvidenceNvrChannelForCamera($cameraName, $cameraIp);
         if ($nvrChannel === null) {
             return;
         }
@@ -109,7 +221,7 @@ trait HikvisionEvidenceSupport
         }
     }
 
-    private function GetEvidenceNvrChannelForCamera(string $cameraName): ?int
+    private function GetEvidenceNvrChannelForCamera(string $cameraName, string $cameraIp = ''): ?int
     {
         $mappings = json_decode($this->ReadPropertyString('EvidenceCameraMappings'), true);
         if (!is_array($mappings)) {
@@ -117,24 +229,31 @@ trait HikvisionEvidenceSupport
         }
 
         $cameraName = trim($cameraName);
+        $cameraIp = trim($cameraIp);
+        $nameFallbackChannel = null;
+
         foreach ($mappings as $mapping) {
             if (!is_array($mapping)) {
                 continue;
             }
 
-            $mappedCamera = trim((string) ($mapping['Camera'] ?? ''));
             $channel = (int) ($mapping['NVRChannel'] ?? 0);
-
-            if ($mappedCamera === '' || $channel < 1 || $channel > 99) {
+            if ($channel < 1 || $channel > 99) {
                 continue;
             }
 
-            if (strcasecmp($mappedCamera, $cameraName) === 0) {
+            $mappedIp = trim((string) ($mapping['IPAddress'] ?? ''));
+            if ($cameraIp !== '' && $mappedIp !== '' && $mappedIp === $cameraIp) {
                 return $channel;
+            }
+
+            $mappedCamera = trim((string) ($mapping['Camera'] ?? ''));
+            if ($mappedCamera !== '' && strcasecmp($mappedCamera, $cameraName) === 0) {
+                $nameFallbackChannel = $channel;
             }
         }
 
-        return null;
+        return $nameFallbackChannel;
     }
 
     public function CompleteEvidenceRequest(int $kameraId, string $resultJson): void
