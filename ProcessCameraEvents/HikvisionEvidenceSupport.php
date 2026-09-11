@@ -1,11 +1,13 @@
 <?php
 
 /**
- * Optional NVR evidence support for ProcessCameraEvents v1.6.6.
+ * Optional NVR evidence support for ProcessCameraEvents v1.6.7.
  *
- * Evidence capture is disabled by default. The alarm webhook only schedules a
- * short isolated worker; all HTTP communication with the evidence service is
- * performed outside the webhook-receiving module context.
+ * Evidence capture is disabled by default. Mapping configuration deliberately
+ * avoids relying on persistence of dynamic List rows because some IP-Symcon
+ * consoles submit only editable/partial row data. The camera object tree is the
+ * source of truth, a module buffer is the working copy, and explicit Save
+ * buttons commit a healed full mapping to the persistent property.
  */
 trait HikvisionEvidenceSupport
 {
@@ -21,6 +23,13 @@ trait HikvisionEvidenceSupport
         $visible = $this->ReadPropertyBoolean('EnableEvidenceRecording');
         $cameraRows = $this->BuildEvidenceCameraRows();
 
+        // Full-load working copy: the object tree supplies CameraID/name/IP and
+        // the persistent property supplies only the user-maintained channel.
+        $bufferJson = json_encode($cameraRows);
+        if ($bufferJson !== false) {
+            $this->SetBuffer('EvidenceMappingBuffer', $bufferJson);
+        }
+
         foreach (($form['elements'] ?? []) as $index => $element) {
             if (($element['name'] ?? '') !== 'EvidencePanel') {
                 continue;
@@ -28,14 +37,27 @@ trait HikvisionEvidenceSupport
 
             $form['elements'][$index]['visible'] = $visible;
 
+            // Do not expose the property-bound dynamic List. Older/legacy
+            // consoles can drop non-editable identity columns when applying it.
+            // Replace it at runtime with an explanatory label. The actual
+            // editor is generated in the actions area below.
             foreach (($element['items'] ?? []) as $itemIndex => $item) {
                 if (($item['name'] ?? '') === 'EvidenceCameraMappings') {
-                    $form['elements'][$index]['items'][$itemIndex]['values'] = $cameraRows;
+                    $form['elements'][$index]['items'][$itemIndex] = [
+                        'type'    => 'Label',
+                        'caption' => 'Camera/NVR channel mappings are edited in the "NVR Evidence Camera Mapping" section below. Camera name and IP are read automatically from the object tree.'
+                    ];
                     break;
                 }
             }
             break;
         }
+
+        if (!isset($form['actions']) || !is_array($form['actions'])) {
+            $form['actions'] = [];
+        }
+
+        $form['actions'][] = $this->BuildEvidenceMappingActionPanel($cameraRows, $visible);
 
         $encoded = json_encode($form);
         return $encoded === false ? '{}' : $encoded;
@@ -44,15 +66,173 @@ trait HikvisionEvidenceSupport
     public function SetEvidenceFormVisibility(bool $enabled): void
     {
         $this->UpdateFormField('EvidencePanel', 'visible', $enabled);
+        $this->UpdateFormField('EvidenceMappingActions', 'visible', $enabled);
+    }
+
+    private function BuildEvidenceMappingActionPanel(array $cameraRows, bool $visible): array
+    {
+        $items = [
+            [
+                'type'    => 'Label',
+                'caption' => 'Detected cameras are read from the module object tree. Enter 0 for cameras not connected to the NVR. Press Save on a changed row. Saving one row commits the complete healed mapping, including all camera IDs and IP addresses.'
+            ],
+            [
+                'type'  => 'RowLayout',
+                'items' => [
+                    ['type' => 'Label', 'caption' => 'Camera',      'width' => '260px', 'bold' => true],
+                    ['type' => 'Label', 'caption' => 'IP Address',  'width' => '180px', 'bold' => true],
+                    ['type' => 'Label', 'caption' => 'NVR Channel', 'width' => '120px', 'bold' => true],
+                    ['type' => 'Label', 'caption' => '',            'width' => '90px']
+                ]
+            ]
+        ];
+
+        foreach ($cameraRows as $row) {
+            $cameraId = (int) ($row['CameraID'] ?? 0);
+            if ($cameraId <= 0) {
+                continue;
+            }
+
+            $fieldName = 'EvidenceChannel_' . $cameraId;
+            $items[] = [
+                'type'  => 'RowLayout',
+                'items' => [
+                    [
+                        'type'    => 'Label',
+                        'caption' => (string) ($row['Camera'] ?? ''),
+                        'width'   => '260px'
+                    ],
+                    [
+                        'type'    => 'Label',
+                        'caption' => (string) ($row['IPAddress'] ?? ''),
+                        'width'   => '180px'
+                    ],
+                    [
+                        'type'    => 'NumberSpinner',
+                        'name'    => $fieldName,
+                        'value'   => max(0, min(99, (int) ($row['NVRChannel'] ?? 0))),
+                        'minimum' => 0,
+                        'maximum' => 99,
+                        'width'   => '120px'
+                    ],
+                    [
+                        'type'    => 'Button',
+                        'caption' => 'Save',
+                        'width'   => '90px',
+                        'onClick' => 'HIK_SaveEvidenceChannel($id, ' . $cameraId . ', $' . $fieldName . ');'
+                    ]
+                ]
+            ];
+        }
+
+        $items[] = [
+            'type'    => 'Button',
+            'caption' => 'Commit detected mappings',
+            'onClick' => 'HIK_CommitEvidenceMappings($id);'
+        ];
+
+        return [
+            'type'     => 'ExpansionPanel',
+            'name'     => 'EvidenceMappingActions',
+            'caption'  => 'NVR Evidence Camera Mapping',
+            'visible'  => $visible,
+            'expanded' => true,
+            'items'    => $items
+        ];
+    }
+
+    /**
+     * Explicitly saves one edited channel while preserving all other rows.
+     * Camera identity metadata is always healed from the live object tree.
+     */
+    public function SaveEvidenceChannel(int $cameraId, int $channel): void
+    {
+        $channel = max(0, min(99, $channel));
+        $rows = $this->ReadEvidenceMappingBuffer();
+        if (count($rows) === 0) {
+            $rows = $this->BuildEvidenceCameraRows();
+        }
+
+        $metadataById = [];
+        foreach ($this->DetectEvidenceCameras() as $camera) {
+            $metadataById[(int) $camera['CameraID']] = $camera;
+        }
+
+        if (!isset($metadataById[$cameraId])) {
+            $this->LogMessage('Unable to save NVR evidence mapping: camera ID ' . $cameraId . ' no longer exists.', KL_WARNING);
+            return;
+        }
+
+        $rowsById = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $id = (int) ($row['CameraID'] ?? 0);
+            if ($id > 0) {
+                $rowsById[$id] = $row;
+            }
+        }
+
+        // Rebuild from master metadata so no partial browser payload can remove
+        // camera names, IP addresses or unrelated rows.
+        $healedRows = [];
+        foreach ($metadataById as $id => $metadata) {
+            $existing = $rowsById[$id] ?? [];
+            $healedRows[] = [
+                'CameraID'   => $id,
+                'Camera'     => (string) $metadata['Camera'],
+                'IPAddress'  => (string) $metadata['IPAddress'],
+                'NVRChannel' => $id === $cameraId
+                    ? $channel
+                    : max(0, min(99, (int) ($existing['NVRChannel'] ?? 0)))
+            ];
+        }
+
+        usort($healedRows, static function (array $left, array $right): int {
+            return strnatcasecmp((string) ($left['Camera'] ?? ''), (string) ($right['Camera'] ?? ''));
+        });
+
+        $this->PersistEvidenceMappings($healedRows);
+    }
+
+    /**
+     * Commits the current full working copy without changing any channel. This
+     * is useful for migrating the old channel-only v1.6.5/v1.6.6 property.
+     */
+    public function CommitEvidenceMappings(): void
+    {
+        $rows = $this->ReadEvidenceMappingBuffer();
+        if (count($rows) === 0) {
+            $rows = $this->BuildEvidenceCameraRows();
+        }
+        $this->PersistEvidenceMappings($rows);
+    }
+
+    private function PersistEvidenceMappings(array $rows): void
+    {
+        $json = json_encode(array_values($rows));
+        if ($json === false) {
+            $this->LogMessage('Unable to encode NVR evidence mappings.', KL_WARNING);
+            return;
+        }
+
+        $this->SetBuffer('EvidenceMappingBuffer', $json);
+        IPS_SetProperty($this->InstanceID, 'EvidenceCameraMappings', $json);
+        IPS_ApplyChanges($this->InstanceID);
+    }
+
+    private function ReadEvidenceMappingBuffer(): array
+    {
+        $rows = json_decode($this->GetBuffer('EvidenceMappingBuffer'), true);
+        return is_array($rows) ? $rows : [];
     }
 
     /**
      * Builds the NVR mapping table from the current camera object tree.
-     *
      * Saved mappings are matched by camera ID, then IP address, then camera
-     * name. The original v1.6.5 format saved only the NVRChannel values; those
-     * legacy rows are migrated by their deterministic, naturally sorted row
-     * order until the configuration is next applied.
+     * name. Legacy channel-only rows are migrated by deterministic natural
+     * camera-name order.
      */
     private function BuildEvidenceCameraRows(): array
     {
@@ -104,7 +284,6 @@ trait HikvisionEvidenceSupport
                 if (array_key_exists($nameKey, $channelsByName)) {
                     $channel = $channelsByName[$nameKey];
                 } elseif (!$hasIdentityData && isset($savedMappings[$index]) && is_array($savedMappings[$index])) {
-                    // Migration path for the first v1.6.5 format which stored only NVRChannel.
                     $channel = max(0, min(99, (int) ($savedMappings[$index]['NVRChannel'] ?? 0)));
                 }
             }
@@ -301,9 +480,6 @@ trait HikvisionEvidenceSupport
             return $nameFallbackChannel;
         }
 
-        // Runtime compatibility with the original v1.6.5 property that saved
-        // only NVRChannel values. The configuration form uses the same natural
-        // camera-name ordering, so its row position can be resolved safely here.
         if (!$hasIdentityData) {
             foreach ($this->DetectEvidenceCameras() as $index => $camera) {
                 if ((int) ($camera['CameraID'] ?? 0) !== $cameraId) {
