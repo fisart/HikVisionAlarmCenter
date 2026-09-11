@@ -47,10 +47,13 @@ trait HikvisionEvidenceSupport
     }
 
     /**
-     * Builds the editable NVR mapping table from camera objects that already
-     * exist below this module instance. Only NVRChannel must be entered by the
-     * user. Existing assignments are retained by IP address first, then by
-     * camera name for backwards compatibility with the first v1.6.5 format.
+     * Builds the NVR mapping table from camera objects below this instance.
+     * Camera and IP are discovered automatically; only NVRChannel is entered
+     * by the user.
+     *
+     * The first v1.6.5 form saved only the editable NVRChannel column. For
+     * those existing configurations we retain assignments by row position once
+     * while migrating to the complete Camera/IP/NVRChannel representation.
      */
     private function BuildEvidenceCameraRows(): array
     {
@@ -61,9 +64,12 @@ trait HikvisionEvidenceSupport
 
         $channelsByIp = [];
         $channelsByName = [];
+        $legacyChannels = [];
+        $hasSavedIdentity = false;
 
         foreach ($savedMappings as $mapping) {
             if (!is_array($mapping)) {
+                $legacyChannels[] = 0;
                 continue;
             }
 
@@ -71,11 +77,15 @@ trait HikvisionEvidenceSupport
             $ip = trim((string) ($mapping['IPAddress'] ?? ''));
             $camera = trim((string) ($mapping['Camera'] ?? ''));
 
+            $legacyChannels[] = $channel;
+
             if ($ip !== '') {
                 $channelsByIp[$ip] = $channel;
+                $hasSavedIdentity = true;
             }
             if ($camera !== '') {
                 $channelsByName[strtolower($camera)] = $channel;
+                $hasSavedIdentity = true;
             }
         }
 
@@ -95,29 +105,36 @@ trait HikvisionEvidenceSupport
                 continue;
             }
 
-            $cameraName = IPS_GetName($cameraId);
-            $ipAddress = $this->GetEvidenceCameraIpAddress($cameraId);
-
-            $channel = 0;
-            if ($ipAddress !== '' && array_key_exists($ipAddress, $channelsByIp)) {
-                $channel = $channelsByIp[$ipAddress];
-            } else {
-                $nameKey = strtolower($cameraName);
-                if (array_key_exists($nameKey, $channelsByName)) {
-                    $channel = $channelsByName[$nameKey];
-                }
-            }
-
             $rows[] = [
-                'Camera'     => $cameraName,
-                'IPAddress'  => $ipAddress,
-                'NVRChannel' => $channel
+                'Camera'     => IPS_GetName($cameraId),
+                'IPAddress'  => $this->GetEvidenceCameraIpAddress($cameraId),
+                'NVRChannel' => 0
             ];
         }
 
         usort($rows, static function (array $left, array $right): int {
             return strnatcasecmp((string) ($left['Camera'] ?? ''), (string) ($right['Camera'] ?? ''));
         });
+
+        foreach ($rows as $index => $row) {
+            $cameraName = (string) ($row['Camera'] ?? '');
+            $ipAddress = (string) ($row['IPAddress'] ?? '');
+            $channel = 0;
+
+            if ($ipAddress !== '' && array_key_exists($ipAddress, $channelsByIp)) {
+                $channel = $channelsByIp[$ipAddress];
+            } else {
+                $nameKey = strtolower($cameraName);
+                if ($nameKey !== '' && array_key_exists($nameKey, $channelsByName)) {
+                    $channel = $channelsByName[$nameKey];
+                } elseif (!$hasSavedIdentity && array_key_exists($index, $legacyChannels)) {
+                    // Compatibility with the initial v1.6.5 list, which persisted only channels.
+                    $channel = $legacyChannels[$index];
+                }
+            }
+
+            $rows[$index]['NVRChannel'] = max(0, min(99, (int) $channel));
+        }
 
         return $rows;
     }
@@ -155,6 +172,12 @@ trait HikvisionEvidenceSupport
         $cameraIp = trim((string) ($motionData['ipAddress'] ?? ''));
         $nvrChannel = $this->GetEvidenceNvrChannelForCamera($cameraName, $cameraIp);
         if ($nvrChannel === null) {
+            if ($this->ReadPropertyBoolean('debug')) {
+                $this->LogMessage(
+                    'NVR evidence skipped for camera "' . $cameraName . '": no NVR channel mapping found.',
+                    KL_DEBUG
+                );
+            }
             return;
         }
 
@@ -223,10 +246,9 @@ trait HikvisionEvidenceSupport
 
     private function GetEvidenceNvrChannelForCamera(string $cameraName, string $cameraIp = ''): ?int
     {
-        $mappings = json_decode($this->ReadPropertyString('EvidenceCameraMappings'), true);
-        if (!is_array($mappings)) {
-            return null;
-        }
+        // Use the same reconstructed rows as the configuration form. This also
+        // understands channel-only mappings saved by the initial v1.6.5 form.
+        $mappings = $this->BuildEvidenceCameraRows();
 
         $cameraName = trim($cameraName);
         $cameraIp = trim($cameraIp);
