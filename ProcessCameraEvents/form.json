@@ -134,6 +134,81 @@
     },
     {
       "type": "CheckBox",
+      "name": "EnableEvidenceRecording",
+      "caption": "Enable NVR evidence recording",
+      "default": false,
+      "onChange": "HIK_SetEvidenceFormVisibility($id, $EnableEvidenceRecording);",
+      "tooltip": "Optional. Requests a short historical recording from an external evidence service when a camera starts a new alarm cycle. The alarm itself never waits for the evidence service."
+    },
+    {
+      "type": "ExpansionPanel",
+      "name": "EvidencePanel",
+      "caption": "NVR Evidence Recording",
+      "visible": false,
+      "expanded": true,
+      "items": [
+        {
+          "type": "ValidationTextBox",
+          "name": "EvidenceServiceURL",
+          "caption": "Evidence Service URL",
+          "default": "",
+          "tooltip": "Base URL of the external evidence service, for example http://192.168.x.x:8765. Leave empty when evidence recording is not used."
+        },
+        {
+          "type": "NumberSpinner",
+          "name": "EvidenceBeforeSeconds",
+          "caption": "Seconds before alarm event",
+          "minimum": 0,
+          "maximum": 300,
+          "default": 15
+        },
+        {
+          "type": "NumberSpinner",
+          "name": "EvidenceAfterSeconds",
+          "caption": "Seconds after alarm event",
+          "minimum": 0,
+          "maximum": 300,
+          "default": 0
+        },
+        {
+          "type": "List",
+          "name": "EvidenceCameraMappings",
+          "caption": "Camera to NVR channel mapping",
+          "rowCount": 8,
+          "add": true,
+          "delete": true,
+          "columns": [
+            {
+              "caption": "Camera",
+              "name": "Camera",
+              "width": "auto",
+              "add": "",
+              "edit": {
+                "type": "ValidationTextBox"
+              }
+            },
+            {
+              "caption": "NVR Channel",
+              "name": "NVRChannel",
+              "width": "120px",
+              "add": 1,
+              "edit": {
+                "type": "NumberSpinner",
+                "minimum": 1,
+                "maximum": 99
+              }
+            }
+          ],
+          "values": []
+        },
+        {
+          "type": "Label",
+          "caption": "Main-stream track IDs are calculated as NVR channel x 100 + 1 (for example D1 = 101, D3 = 301). Evidence is requested only on the first alarm event of a new camera alarm cycle."
+        }
+      ]
+    },
+    {
+      "type": "CheckBox",
       "name": "debug",
       "caption": "Debug Messages"
     }
