@@ -7,13 +7,19 @@
  * back into the module briefly with the accepted job metadata. It never handles
  * camera credentials and never performs NVR/RTSP work itself.
  *
- * A short delay is applied before the POST so the NVR has time to finalize and
- * index the recording segment around the just-received alarm event. The delay
- * happens only in this isolated worker and therefore does not delay the alarm
- * webhook path itself.
+ * EvidenceAfterSeconds is retained as the internal property name for backwards
+ * compatibility, but the configuration form exposes it as the total clip
+ * length. From that value the worker derives the post-event recording time and
+ * waits long enough for that part of the NVR recording to exist, plus a small
+ * safety margin. The wait happens only in this isolated worker and therefore
+ * does not delay the alarm webhook path itself.
  */
 final class HikvisionEvidenceRequestWorker
 {
+    private const DEFAULT_CLIP_LENGTH_SECONDS = 20;
+    private const MAX_CLIP_LENGTH_SECONDS = 60;
+    private const NVR_INDEX_SAFETY_SECONDS = 10;
+
     public static function Run(string $workerDataJson): void
     {
         $config = json_decode($workerDataJson, true);
@@ -36,17 +42,32 @@ final class HikvisionEvidenceRequestWorker
             $cameraName = trim((string) ($config['cameraName'] ?? ''));
             $track = (int) ($config['track'] ?? 0);
             $eventTime = trim((string) ($config['eventTime'] ?? ''));
-            $before = max(0, min(300, (int) ($config['before'] ?? 15)));
-            $after = max(0, min(300, (int) ($config['after'] ?? 0)));
-            $delaySeconds = max(0, min(60, (int) ($config['delaySeconds'] ?? 15)));
+            $before = max(0, min(self::MAX_CLIP_LENGTH_SECONDS, (int) ($config['before'] ?? 15)));
+
+            // The existing "after" transport field now carries the requested
+            // total clip length. A stored value of 0 is treated as the new
+            // default so existing installations continue to work after update.
+            $requestedClipLength = max(
+                0,
+                min(self::MAX_CLIP_LENGTH_SECONDS, (int) ($config['after'] ?? 0))
+            );
+            if ($requestedClipLength <= 0) {
+                $requestedClipLength = self::DEFAULT_CLIP_LENGTH_SECONDS;
+            }
+
+            // A clip cannot be shorter than its requested pre-event portion.
+            $clipLength = max($before, $requestedClipLength);
+            $after = max(0, $clipLength - $before);
+
+            // Do not query historical playback until the complete requested
+            // post-event section should have been recorded, then allow the NVR
+            // a further ten seconds to finalize/index the segment.
+            $delaySeconds = $after + self::NVR_INDEX_SAFETY_SECONDS;
 
             if ($instanceId <= 0 || $cameraId <= 0 || $serviceUrl === '' || $cameraName === '' || $track <= 0 || $eventTime === '') {
                 throw new RuntimeException('Evidence worker data is incomplete.');
             }
 
-            // Let the NVR finish/index the most recent recording segment before
-            // asking the evidence service for historical playback around the
-            // alarm timestamp. This worker is isolated from the alarm webhook.
             if ($delaySeconds > 0) {
                 sleep($delaySeconds);
             }
