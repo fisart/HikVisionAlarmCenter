@@ -1,7 +1,10 @@
 <?php
-// Version 1.6.4 (adds per-camera Alarm Enabled switch)
+// Version 1.6.5 (adds optional asynchronous NVR evidence recording)
+require_once __DIR__ . DIRECTORY_SEPARATOR . 'HikvisionEvidenceSupport.php';
+
 class ProcessCameraEvents extends IPSModule
 {
+    use HikvisionEvidenceSupport;
 
     public function Create()
     {
@@ -27,6 +30,12 @@ class ProcessCameraEvents extends IPSModule
         $this->RegisterPropertyInteger('SmartCommandDelayMs', 500);
         $this->RegisterPropertyInteger('SmartCommandRetryCount', 2);
         $this->RegisterPropertyBoolean('DisableIllegalLoginSurveillanceCenter', false);
+        // Optional NVR evidence recording. Disabled by default and dependency-free when off.
+        $this->RegisterPropertyBoolean('EnableEvidenceRecording', false);
+        $this->RegisterPropertyString('EvidenceServiceURL', '');
+        $this->RegisterPropertyInteger('EvidenceBeforeSeconds', 15);
+        $this->RegisterPropertyInteger('EvidenceAfterSeconds', 0);
+        $this->RegisterPropertyString('EvidenceCameraMappings', '[]');
         $this->RegisterAttributeInteger('counter', '0');
         $this->RegisterAttributeString('EggTimerModuleId', '{17843F0A-BFC8-A4BA-E219-A2D10FC8E5BE}');
 
@@ -169,6 +178,7 @@ class ProcessCameraEvents extends IPSModule
             if ($debug) $this->LogMessage("Semaphore process wurde betreten  " . $semaphore_process_name, KL_DEBUG);
 
             $kameraId = $this->manageVariable($parent, $kamera_name, 0, 'Motion', true, 0, "");
+            $wasAlarmActive = GetValueBoolean($kameraId);
 
             // Per-camera alarm switch. Existing and newly discovered cameras default to enabled.
             $alarmEnabledId = $this->EnsureCameraAlarmEnabledVariable($kameraId);
@@ -211,6 +221,12 @@ class ProcessCameraEvents extends IPSModule
             if ($alarmEnabled) {
                 SetValueBoolean($kameraId, true);
                 $this->handle_egg_timer($source, $kamera_name, $kameraId);
+
+                // Request at most one evidence clip per camera alarm cycle. The alarm state
+                // and reset timer are already active before the isolated worker is scheduled.
+                if (!$wasAlarmActive) {
+                    $this->DispatchEvidenceRequest($kameraId, $kamera_name, $motionData);
+                }
             } else {
                 // A disabled camera must not remain in an active alarm state.
                 if (GetValueBoolean($kameraId)) {
