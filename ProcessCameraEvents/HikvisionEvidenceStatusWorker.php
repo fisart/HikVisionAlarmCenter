@@ -3,9 +3,9 @@
 /**
  * Isolated HTTP worker for polling one Hikvision evidence job status.
  *
- * The worker performs one bounded GET against the evidence service and calls
- * back into the module with the normalized status. No waiting or retry loop is
- * performed here; the module timer decides when another poll is scheduled.
+ * The worker performs one bounded GET against the evidence service and hands
+ * the normalized result to HikvisionEvidenceStatusRuntime. No waiting or retry
+ * loop is performed here; the IP-Symcon script timer schedules future polls.
  */
 final class HikvisionEvidenceStatusWorker
 {
@@ -20,10 +20,10 @@ final class HikvisionEvidenceStatusWorker
         $instanceId = (int) ($config['instanceId'] ?? 0);
         $cameraId = (int) ($config['cameraId'] ?? 0);
         $jobId = trim((string) ($config['jobId'] ?? ''));
-        $callback = (string) ($config['callback'] ?? '');
 
         $result = [
             'success' => false,
+            'job'     => $jobId,
             'message' => 'Unknown evidence status worker error.'
         ];
 
@@ -98,10 +98,12 @@ final class HikvisionEvidenceStatusWorker
                 $resultJson = '{"success":false,"message":"Unable to encode evidence status worker result."}';
             }
 
-            if ($callback !== '' && is_callable($callback)) {
-                call_user_func($callback, $instanceId, $cameraId, $jobId, $resultJson);
+            $runtimeFile = __DIR__ . DIRECTORY_SEPARATOR . 'HikvisionEvidenceStatusRuntime.php';
+            if (is_file($runtimeFile)) {
+                require_once $runtimeFile;
+                HikvisionEvidenceStatusRuntime::CompletePoll($instanceId, $cameraId, $jobId, $resultJson);
             } else {
-                IPS_LogMessage('Hikvision Evidence Status Worker', 'Completion callback is unavailable.');
+                IPS_LogMessage('Hikvision Evidence Status Worker', 'HikvisionEvidenceStatusRuntime.php is missing.');
             }
         }
     }
