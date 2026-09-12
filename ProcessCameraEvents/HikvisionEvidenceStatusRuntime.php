@@ -15,20 +15,49 @@ final class HikvisionEvidenceStatusRuntime
     private const POLL_INTERVAL_SECONDS = 10;
     private const MAX_TRACKING_SECONDS = 900;
 
+    public static function Initialize(int $instanceId): void
+    {
+        if (!IPS_InstanceExists($instanceId)) {
+            return;
+        }
+
+        $semaphore = 'HikvisionEvidenceInit_' . $instanceId;
+        if (IPS_SemaphoreEnter($semaphore, 5000)) {
+            try {
+                self::EnsureEvidenceReadyVariables($instanceId);
+            } finally {
+                IPS_SemaphoreLeave($semaphore);
+            }
+        }
+
+        // Resume polling after ApplyChanges/module reload only if an accepted,
+        // waiting or running evidence job is still present in the camera tree.
+        self::RefreshPollTimer($instanceId);
+    }
+
     public static function Begin(int $instanceId, int $cameraId): void
     {
         if (!IPS_InstanceExists($instanceId) || !IPS_VariableExists($cameraId)) {
             return;
         }
 
-        self::EnsureEvidenceReadyVariables($instanceId);
+        $semaphore = 'HikvisionEvidenceInit_' . $instanceId;
+        if (IPS_SemaphoreEnter($semaphore, 5000)) {
+            try {
+                self::EnsureEvidenceReadyVariables($instanceId);
 
-        self::SetEvidenceReady($cameraId, false);
-        self::SetString($cameraId, 'Evidence Status', 'requesting');
-        self::SetString($cameraId, 'Evidence Job ID', '');
-        self::SetString($cameraId, 'Evidence File', '');
-        self::SetString($cameraId, 'Evidence Status URL', '');
-        self::SetString($cameraId, 'Evidence URL', '');
+                // Clear the previous clip state when a new evidence request is
+                // actually dispatched by the isolated request worker.
+                self::SetEvidenceReady($cameraId, false);
+                self::SetString($cameraId, 'Evidence Status', 'requesting');
+                self::SetString($cameraId, 'Evidence Job ID', '');
+                self::SetString($cameraId, 'Evidence File', '');
+                self::SetString($cameraId, 'Evidence Status URL', '');
+                self::SetString($cameraId, 'Evidence URL', '');
+            } finally {
+                IPS_SemaphoreLeave($semaphore);
+            }
+        }
 
         self::RefreshPollTimer($instanceId);
     }
@@ -148,6 +177,8 @@ final class HikvisionEvidenceStatusRuntime
             return;
         }
 
+        // The object tree is authoritative. A newer alarm cycle may have
+        // replaced the job while this isolated status worker was running.
         if (self::GetString($cameraId, 'Evidence Job ID') !== $jobId) {
             return;
         }
@@ -243,28 +274,37 @@ final class HikvisionEvidenceStatusRuntime
 
     private static function SetPollTimer(int $instanceId, int $seconds): void
     {
-        $scriptId = self::FindPollScript($instanceId);
-
-        if ($seconds <= 0) {
-            if ($scriptId !== null) {
-                IPS_SetScriptTimer($scriptId, 0);
-            }
+        $semaphore = 'HikvisionEvidenceTimer_' . $instanceId;
+        if (!IPS_SemaphoreEnter($semaphore, 5000)) {
             return;
         }
 
-        if ($scriptId === null) {
-            $scriptId = IPS_CreateScript(0);
-            IPS_SetName($scriptId, self::POLL_SCRIPT_NAME);
-            IPS_SetParent($scriptId, $instanceId);
-            IPS_SetHidden($scriptId, true);
-        }
+        try {
+            $scriptId = self::FindPollScript($instanceId);
 
-        $runtimeFile = var_export(__FILE__, true);
-        IPS_SetScriptContent(
-            $scriptId,
-            "<?php\nrequire_once " . $runtimeFile . ";\nHikvisionEvidenceStatusRuntime::Poll(" . $instanceId . ");\n"
-        );
-        IPS_SetScriptTimer($scriptId, $seconds);
+            if ($seconds <= 0) {
+                if ($scriptId !== null) {
+                    IPS_SetScriptTimer($scriptId, 0);
+                }
+                return;
+            }
+
+            if ($scriptId === null) {
+                $scriptId = IPS_CreateScript(0);
+                IPS_SetName($scriptId, self::POLL_SCRIPT_NAME);
+                IPS_SetParent($scriptId, $instanceId);
+                IPS_SetHidden($scriptId, true);
+            }
+
+            $runtimeFile = var_export(__FILE__, true);
+            IPS_SetScriptContent(
+                $scriptId,
+                "<?php\nrequire_once " . $runtimeFile . ";\nHikvisionEvidenceStatusRuntime::Poll(" . $instanceId . ");\n"
+            );
+            IPS_SetScriptTimer($scriptId, $seconds);
+        } finally {
+            IPS_SemaphoreLeave($semaphore);
+        }
     }
 
     private static function FindPollScript(int $instanceId): ?int
@@ -403,6 +443,7 @@ final class HikvisionEvidenceStatusRuntime
 
     private static function Log(string $message, int $level): void
     {
+        // IPS_LogMessage has no level parameter; include the severity in the text.
         $label = $level === KL_WARNING ? 'WARNING' : ($level === KL_ERROR ? 'ERROR' : 'DEBUG');
         IPS_LogMessage('Hikvision Evidence Status', '[' . $label . '] ' . $message);
     }
