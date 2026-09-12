@@ -3,69 +3,24 @@
 /**
  * Non-blocking evidence status tracking for ProcessCameraEvents.
  *
- * The module timer only schedules short isolated HTTP workers. All network I/O
- * therefore remains outside the alarm/webhook execution path. Active jobs are
- * persisted in an instance attribute so polling can resume after ApplyChanges
- * or a module reload. Only the newest evidence job per camera is tracked.
+ * A hidden IP-Symcon script timer wakes every 10 seconds only while at least one
+ * evidence job is active. The timer itself performs no network I/O; it only
+ * schedules short isolated HTTP workers. This keeps all status communication
+ * outside the alarm/webhook execution path.
  */
 trait HikvisionEvidenceStatusSupport
 {
     public function BeginEvidenceStatusTracking(int $cameraId): void
     {
-        $this->BeginEvidenceDispatch($cameraId);
-    }
-
-    public function TrackEvidenceRequestResult(int $cameraId, string $resultJson): void
-    {
         if (!IPS_VariableExists($cameraId)) {
             return;
         }
 
-        $result = json_decode($resultJson, true);
-        if (!is_array($result)) {
-            $this->FailEvidenceDispatch($cameraId, 'Evidence request worker returned invalid result JSON.');
-            return;
-        }
-
-        if (empty($result['success'])) {
-            $this->FailEvidenceDispatch(
-                $cameraId,
-                trim((string) ($result['message'] ?? 'Unknown evidence service error.'))
-            );
-            return;
-        }
-
-        $this->AcceptEvidenceJob($cameraId, $result);
-    }
-
-    private function InitializeEvidenceStatusSupport(): void
-    {
         $this->EnsureEvidenceReadyVariables();
-        $this->RefreshEvidencePollingTimer();
-    }
+        $this->RemoveEvidenceTrackingState($cameraId);
 
-    private function BeginEvidenceDispatch(int $cameraId): void
-    {
-        if (!IPS_VariableExists($cameraId)) {
-            return;
-        }
-
-        $semaphore = 'HikvisionEvidenceJobs_' . $this->InstanceID;
-        if (!IPS_SemaphoreEnter($semaphore, 2000)) {
-            $this->LogMessage('Unable to clear the previous evidence job state for camera ID ' . $cameraId . '.', KL_WARNING);
-            return;
-        }
-
-        try {
-            $jobs = $this->ReadEvidenceActiveJobs();
-            unset($jobs[(string) $cameraId]);
-            $this->WriteEvidenceActiveJobs($jobs);
-        } finally {
-            IPS_SemaphoreLeave($semaphore);
-        }
-
-        // Clear the previous result only after the old tracked job has been
-        // invalidated, so a stale in-flight callback cannot make it Ready again.
+        // Invalidate the previous result only after its tracking state is gone,
+        // so a stale in-flight callback cannot make the old clip Ready again.
         $this->SetEvidenceReadyVariable($cameraId, false);
         $this->SetEvidenceStringVariable($cameraId, 'Evidence Status', 'requesting');
         $this->SetEvidenceStringVariable($cameraId, 'Evidence Job ID', '');
@@ -76,36 +31,23 @@ trait HikvisionEvidenceStatusSupport
         $this->RefreshEvidencePollingTimer();
     }
 
-    private function FailEvidenceDispatch(int $cameraId, string $message = ''): void
+    public function TrackEvidenceRequestResult(int $cameraId, string $resultJson): void
     {
         if (!IPS_VariableExists($cameraId)) {
             return;
         }
 
-        $semaphore = 'HikvisionEvidenceJobs_' . $this->InstanceID;
-        if (IPS_SemaphoreEnter($semaphore, 2000)) {
-            try {
-                $jobs = $this->ReadEvidenceActiveJobs();
-                unset($jobs[(string) $cameraId]);
-                $this->WriteEvidenceActiveJobs($jobs);
-            } finally {
-                IPS_SemaphoreLeave($semaphore);
-            }
+        $result = json_decode($resultJson, true);
+        if (!is_array($result)) {
+            $this->SetEvidenceTrackingFailed($cameraId, 'Evidence request worker returned invalid result JSON.');
+            return;
         }
 
-        $this->SetEvidenceReadyVariable($cameraId, false);
-        $this->SetEvidenceStringVariable($cameraId, 'Evidence Status', 'failed');
-
-        if ($message !== '' && $this->ReadPropertyBoolean('debug')) {
-            $this->LogMessage('Evidence dispatch failed for camera "' . IPS_GetName($cameraId) . '": ' . $message, KL_DEBUG);
-        }
-
-        $this->RefreshEvidencePollingTimer();
-    }
-
-    private function AcceptEvidenceJob(int $cameraId, array $result): void
-    {
-        if (!IPS_VariableExists($cameraId)) {
+        if (empty($result['success'])) {
+            $this->SetEvidenceTrackingFailed(
+                $cameraId,
+                trim((string) ($result['message'] ?? 'Unknown evidence service error.'))
+            );
             return;
         }
 
@@ -113,7 +55,13 @@ trait HikvisionEvidenceStatusSupport
         $serviceUrl = rtrim(trim((string) ($result['serviceUrl'] ?? '')), '/');
         $statusUrl = $this->ResolveEvidenceUrl($serviceUrl, (string) ($result['statusUrl'] ?? ''));
         $videoUrl = $this->ResolveEvidenceUrl($serviceUrl, (string) ($result['videoUrl'] ?? ''));
-        $status = strtolower(trim((string) ($result['status'] ?? 'accepted'));
+
+        if ($jobId === '' || $statusUrl === '') {
+            $this->SetEvidenceTrackingFailed($cameraId, 'Evidence service did not return a usable job/status URL.');
+            return;
+        }
+
+        $status = strtolower(trim((string) ($result['status'] ?? 'accepted')));
         if ($status === 'pending') {
             $status = 'waiting';
         }
@@ -128,68 +76,53 @@ trait HikvisionEvidenceStatusSupport
         $this->SetEvidenceStringVariable($cameraId, 'Evidence Status URL', $statusUrl);
         $this->SetEvidenceStringVariable($cameraId, 'Evidence URL', $videoUrl);
 
-        if ($jobId === '' || $statusUrl === '') {
-            $this->SetEvidenceReadyVariable($cameraId, false);
-            $this->SetEvidenceStringVariable($cameraId, 'Evidence Status', 'failed');
-            $this->LogMessage(
-                'Evidence service accepted a request for camera "' . IPS_GetName($cameraId) . '" but did not return a usable job/status URL.',
-                KL_WARNING
-            );
-            return;
-        }
-
         if ($status === 'done' || $status === 'failed') {
+            $this->RemoveEvidenceTrackingState($cameraId);
             $this->RefreshEvidencePollingTimer();
             return;
         }
 
-        $semaphore = 'HikvisionEvidenceJobs_' . $this->InstanceID;
-        if (!IPS_SemaphoreEnter($semaphore, 2000)) {
-            $this->LogMessage('Unable to register evidence polling for camera "' . IPS_GetName($cameraId) . '".', KL_WARNING);
-            return;
-        }
+        $this->SetEvidenceTrackingState($cameraId, [
+            'job'           => $jobId,
+            'serviceUrl'    => $serviceUrl,
+            'statusUrl'     => $statusUrl,
+            'acceptedAt'    => time(),
+            'pollInFlight'  => false,
+            'pollStartedAt' => 0,
+            'pollErrors'    => 0
+        ]);
 
-        try {
-            $jobs = $this->ReadEvidenceActiveJobs();
-            $jobs[(string) $cameraId] = [
-                'job'           => $jobId,
-                'serviceUrl'    => $serviceUrl,
-                'statusUrl'     => $statusUrl,
-                'acceptedAt'    => time(),
-                'pollInFlight'  => false,
-                'pollStartedAt' => 0,
-                'pollErrors'    => 0
-            ];
-            $this->WriteEvidenceActiveJobs($jobs);
-        } finally {
-            IPS_SemaphoreLeave($semaphore);
-        }
+        $this->RefreshEvidencePollingTimer();
+    }
 
+    private function InitializeEvidenceStatusSupport(): void
+    {
+        $this->EnsureEvidenceReadyVariables();
         $this->RefreshEvidencePollingTimer();
     }
 
     public function PollEvidenceJobs(): void
     {
         if (!$this->ReadPropertyBoolean('EnableEvidenceRecording')) {
-            $this->SetTimerInterval('EvidenceStatusPoll', 0);
+            $this->SetEvidencePollScriptTimer(0);
             return;
         }
 
         $workerFile = __DIR__ . DIRECTORY_SEPARATOR . 'HikvisionEvidenceStatusWorker.php';
         if (!is_file($workerFile)) {
             $this->LogMessage('HikvisionEvidenceStatusWorker.php is missing from the module directory.', KL_WARNING);
-            $this->SetTimerInterval('EvidenceStatusPoll', 0);
+            $this->SetEvidencePollScriptTimer(0);
             return;
         }
 
         $prefix = $this->GetEvidenceModulePrefix();
         if ($prefix === '') {
             $this->LogMessage('Unable to determine a valid module prefix for evidence status polling.', KL_WARNING);
-            $this->SetTimerInterval('EvidenceStatusPoll', 0);
+            $this->SetEvidencePollScriptTimer(0);
             return;
         }
 
-        $semaphore = 'HikvisionEvidenceJobs_' . $this->InstanceID;
+        $semaphore = 'HikvisionEvidenceStatus_' . $this->InstanceID;
         if (!IPS_SemaphoreEnter($semaphore, 1000)) {
             return;
         }
@@ -198,29 +131,35 @@ trait HikvisionEvidenceStatusSupport
         $now = time();
 
         try {
-            $jobs = $this->ReadEvidenceActiveJobs();
+            $activeJobs = $this->GetActiveEvidenceJobsFromVariables();
+            $state = $this->ReadEvidenceTrackingState();
 
-            foreach ($jobs as $cameraKey => $job) {
+            foreach ($state as $cameraKey => $entry) {
+                if (!isset($activeJobs[$cameraKey]) || !is_array($entry) ||
+                    (string) ($entry['job'] ?? '') !== (string) ($activeJobs[$cameraKey]['job'] ?? '')) {
+                    unset($state[$cameraKey]);
+                }
+            }
+
+            foreach ($activeJobs as $cameraKey => $job) {
                 $cameraId = (int) $cameraKey;
-                if ($cameraId <= 0 || !IPS_VariableExists($cameraId) || !is_array($job)) {
-                    unset($jobs[$cameraKey]);
-                    continue;
+                $jobId = (string) $job['job'];
+                $statusUrl = (string) $job['statusUrl'];
+                $serviceUrl = (string) $job['serviceUrl'];
+
+                if (!isset($state[$cameraKey]) || !is_array($state[$cameraKey])) {
+                    $state[$cameraKey] = [
+                        'job'           => $jobId,
+                        'serviceUrl'    => $serviceUrl,
+                        'statusUrl'     => $statusUrl,
+                        'acceptedAt'    => $now,
+                        'pollInFlight'  => false,
+                        'pollStartedAt' => 0,
+                        'pollErrors'    => 0
+                    ];
                 }
 
-                $jobId = trim((string) ($job['job'] ?? ''));
-                $statusUrl = trim((string) ($job['statusUrl'] ?? ''));
-                $acceptedAt = (int) ($job['acceptedAt'] ?? $now);
-
-                if ($jobId === '' || $statusUrl === '') {
-                    $this->SetEvidenceReadyVariable($cameraId, false);
-                    $this->SetEvidenceStringVariable($cameraId, 'Evidence Status', 'failed');
-                    unset($jobs[$cameraKey]);
-                    continue;
-                }
-
-                // The QNAP service currently retries for up to 10 minutes. A
-                // 15-minute local ceiling prevents an unreachable status URL
-                // from creating an unbounded polling loop.
+                $acceptedAt = (int) ($state[$cameraKey]['acceptedAt'] ?? $now);
                 if (($now - $acceptedAt) > 900) {
                     $this->SetEvidenceReadyVariable($cameraId, false);
                     $this->SetEvidenceStringVariable($cameraId, 'Evidence Status', 'failed');
@@ -228,34 +167,37 @@ trait HikvisionEvidenceStatusSupport
                         'Evidence status polling timed out for camera "' . IPS_GetName($cameraId) . '". Job: ' . $jobId,
                         KL_WARNING
                     );
-                    unset($jobs[$cameraKey]);
+                    unset($state[$cameraKey]);
                     continue;
                 }
 
-                $pollInFlight = !empty($job['pollInFlight']);
-                $pollStartedAt = (int) ($job['pollStartedAt'] ?? 0);
+                $pollInFlight = !empty($state[$cameraKey]['pollInFlight']);
+                $pollStartedAt = (int) ($state[$cameraKey]['pollStartedAt'] ?? 0);
                 if ($pollInFlight && ($now - $pollStartedAt) < 30) {
                     continue;
                 }
 
-                $jobs[$cameraKey]['pollInFlight'] = true;
-                $jobs[$cameraKey]['pollStartedAt'] = $now;
+                $state[$cameraKey]['pollInFlight'] = true;
+                $state[$cameraKey]['pollStartedAt'] = $now;
+                $state[$cameraKey]['serviceUrl'] = $serviceUrl;
+                $state[$cameraKey]['statusUrl'] = $statusUrl;
 
                 $polls[] = [
                     'cameraId'   => $cameraId,
                     'jobId'      => $jobId,
-                    'serviceUrl' => (string) ($job['serviceUrl'] ?? ''),
+                    'serviceUrl' => $serviceUrl,
                     'statusUrl'  => $statusUrl
                 ];
             }
 
-            $this->WriteEvidenceActiveJobs($jobs);
+            $this->WriteEvidenceTrackingState($state);
         } finally {
             IPS_SemaphoreLeave($semaphore);
         }
 
+        $this->RefreshEvidencePollingTimer();
+
         if (count($polls) === 0) {
-            $this->RefreshEvidencePollingTimer();
             return;
         }
 
@@ -297,6 +239,15 @@ trait HikvisionEvidenceStatusSupport
 
     public function CompleteEvidenceStatusPoll(int $cameraId, string $jobId, string $resultJson): void
     {
+        if (!IPS_VariableExists($cameraId)) {
+            return;
+        }
+
+        $currentJobId = $this->GetEvidenceStringVariableValue($cameraId, 'Evidence Job ID');
+        if ($currentJobId === '' || $currentJobId !== $jobId) {
+            return;
+        }
+
         $result = json_decode($resultJson, true);
         if (!is_array($result)) {
             $result = [
@@ -305,100 +256,107 @@ trait HikvisionEvidenceStatusSupport
             ];
         }
 
-        $semaphore = 'HikvisionEvidenceJobs_' . $this->InstanceID;
+        $semaphore = 'HikvisionEvidenceStatus_' . $this->InstanceID;
         if (!IPS_SemaphoreEnter($semaphore, 2000)) {
             return;
         }
 
         $logMessage = '';
         $logLevel = KL_DEBUG;
-        $staleCallback = false;
 
         try {
-            $jobs = $this->ReadEvidenceActiveJobs();
+            $state = $this->ReadEvidenceTrackingState();
             $cameraKey = (string) $cameraId;
-            $active = $jobs[$cameraKey] ?? null;
+            $entry = $state[$cameraKey] ?? [
+                'job'           => $jobId,
+                'serviceUrl'    => '',
+                'statusUrl'     => $this->GetEvidenceStringVariableValue($cameraId, 'Evidence Status URL'),
+                'acceptedAt'    => time(),
+                'pollInFlight'  => false,
+                'pollStartedAt' => 0,
+                'pollErrors'    => 0
+            ];
 
-            // A newer alarm cycle can replace the tracked job while an older
-            // status worker is still in flight. Ignore such stale callbacks.
-            if (!is_array($active) || (string) ($active['job'] ?? '') !== $jobId) {
-                $staleCallback = true;
+            if ((string) ($entry['job'] ?? '') !== $jobId) {
+                return;
+            }
+
+            $entry['pollInFlight'] = false;
+            $entry['pollStartedAt'] = 0;
+
+            if (empty($result['success'])) {
+                $errors = (int) ($entry['pollErrors'] ?? 0) + 1;
+                $entry['pollErrors'] = $errors;
+                $state[$cameraKey] = $entry;
+                $this->WriteEvidenceTrackingState($state);
+
+                if ($errors === 1 || ($errors % 6) === 0) {
+                    $logMessage = 'Evidence status poll failed for camera "' . IPS_GetName($cameraId) . '" job ' . $jobId . ': ' .
+                        trim((string) ($result['message'] ?? 'Unknown status error.'));
+                    $logLevel = KL_WARNING;
+                }
             } else {
-                $jobs[$cameraKey]['pollInFlight'] = false;
-                $jobs[$cameraKey]['pollStartedAt'] = 0;
+                $status = strtolower(trim((string) ($result['status'] ?? '')));
+                if ($status === 'pending') {
+                    $status = 'waiting';
+                }
+                if (!in_array($status, ['accepted', 'waiting', 'running', 'done', 'failed'], true)) {
+                    $status = 'waiting';
+                }
 
-                if (empty($result['success'])) {
-                    $errors = (int) ($jobs[$cameraKey]['pollErrors'] ?? 0) + 1;
-                    $jobs[$cameraKey]['pollErrors'] = $errors;
-                    $this->WriteEvidenceActiveJobs($jobs);
+                $entry['pollErrors'] = 0;
+                $this->SetEvidenceStringVariable($cameraId, 'Evidence Status', $status);
+                $this->SetEvidenceReadyVariable($cameraId, $status === 'done');
 
-                    if ($errors === 1 || ($errors % 6) === 0) {
-                        $logMessage = 'Evidence status poll failed for camera "' . IPS_GetName($cameraId) . '" job ' . $jobId . ': ' .
-                            trim((string) ($result['message'] ?? 'Unknown status error.'));
-                        $logLevel = KL_WARNING;
+                $file = trim((string) ($result['file'] ?? ''));
+                if ($file !== '') {
+                    $this->SetEvidenceStringVariable($cameraId, 'Evidence File', $file);
+                }
+
+                $serviceUrl = rtrim(trim((string) ($result['serviceUrl'] ?? ($entry['serviceUrl'] ?? ''))), '/');
+                $videoUrl = $this->ResolveEvidenceUrl($serviceUrl, (string) ($result['videoUrl'] ?? ''));
+                if ($videoUrl !== '') {
+                    $this->SetEvidenceStringVariable($cameraId, 'Evidence URL', $videoUrl);
+                }
+
+                if ($status === 'done' || $status === 'failed') {
+                    unset($state[$cameraKey]);
+                    if ($this->ReadPropertyBoolean('debug')) {
+                        $logMessage = 'Evidence job ' . $jobId . ' for camera "' . IPS_GetName($cameraId) . '" reached terminal status ' . $status . '.';
+                        $logLevel = KL_DEBUG;
                     }
                 } else {
-                    $status = strtolower(trim((string) ($result['status'] ?? '')));
-                    if ($status === 'pending') {
-                        $status = 'waiting';
-                    }
-                    if (!in_array($status, ['accepted', 'waiting', 'running', 'done', 'failed'], true)) {
-                        $status = 'waiting';
-                    }
-
-                    $jobs[$cameraKey]['pollErrors'] = 0;
-                    $this->SetEvidenceStringVariable($cameraId, 'Evidence Status', $status);
-                    $this->SetEvidenceReadyVariable($cameraId, $status === 'done');
-
-                    $file = trim((string) ($result['file'] ?? ''));
-                    if ($file !== '') {
-                        $this->SetEvidenceStringVariable($cameraId, 'Evidence File', $file);
-                    }
-
-                    $serviceUrl = rtrim(trim((string) ($result['serviceUrl'] ?? ($active['serviceUrl'] ?? ''))), '/');
-                    $videoUrl = $this->ResolveEvidenceUrl($serviceUrl, (string) ($result['videoUrl'] ?? ''));
-                    if ($videoUrl !== '') {
-                        $this->SetEvidenceStringVariable($cameraId, 'Evidence URL', $videoUrl);
-                    }
-
-                    if ($status === 'done' || $status === 'failed') {
-                        unset($jobs[$cameraKey]);
-
-                        if ($this->ReadPropertyBoolean('debug')) {
-                            $logMessage = 'Evidence job ' . $jobId . ' for camera "' . IPS_GetName($cameraId) . '" reached terminal status ' . $status . '.';
-                            $logLevel = KL_DEBUG;
-                        }
-                    }
-
-                    $this->WriteEvidenceActiveJobs($jobs);
+                    $state[$cameraKey] = $entry;
                 }
+
+                $this->WriteEvidenceTrackingState($state);
             }
         } finally {
             IPS_SemaphoreLeave($semaphore);
             $this->RefreshEvidencePollingTimer();
         }
 
-        if (!$staleCallback && $logMessage !== '') {
+        if ($logMessage !== '') {
             $this->LogMessage($logMessage, $logLevel);
         }
     }
 
+    private function SetEvidenceTrackingFailed(int $cameraId, string $message): void
+    {
+        $this->RemoveEvidenceTrackingState($cameraId);
+        $this->SetEvidenceReadyVariable($cameraId, false);
+        $this->SetEvidenceStringVariable($cameraId, 'Evidence Status', 'failed');
+
+        if ($message !== '' && $this->ReadPropertyBoolean('debug')) {
+            $this->LogMessage('Evidence request failed for camera "' . IPS_GetName($cameraId) . '": ' . $message, KL_DEBUG);
+        }
+
+        $this->RefreshEvidencePollingTimer();
+    }
+
     private function EnsureEvidenceReadyVariables(): void
     {
-        foreach (IPS_GetChildrenIDs($this->InstanceID) as $cameraId) {
-            $object = IPS_GetObject($cameraId);
-            if ((int) ($object['ObjectType'] ?? -1) !== 2) {
-                continue;
-            }
-
-            $variable = IPS_GetVariable($cameraId);
-            if ((int) ($variable['VariableType'] ?? -1) !== 0) {
-                continue;
-            }
-            if (($variable['VariableCustomProfile'] ?? '') !== 'Motion') {
-                continue;
-            }
-
+        foreach ($this->GetEvidenceCameraIds() as $cameraId) {
             $this->EnsureEvidenceReadyVariable($cameraId);
         }
     }
@@ -438,27 +396,183 @@ trait HikvisionEvidenceStatusSupport
         }
     }
 
-    private function ReadEvidenceActiveJobs(): array
+    private function GetEvidenceCameraIds(): array
     {
-        $jobs = json_decode($this->ReadAttributeString('EvidenceActiveJobs'), true);
-        return is_array($jobs) ? $jobs : [];
+        $cameraIds = [];
+        foreach (IPS_GetChildrenIDs($this->InstanceID) as $cameraId) {
+            $object = IPS_GetObject($cameraId);
+            if ((int) ($object['ObjectType'] ?? -1) !== 2) {
+                continue;
+            }
+
+            $variable = IPS_GetVariable($cameraId);
+            if ((int) ($variable['VariableType'] ?? -1) !== 0) {
+                continue;
+            }
+            if (($variable['VariableCustomProfile'] ?? '') !== 'Motion') {
+                continue;
+            }
+
+            $cameraIds[] = (int) $cameraId;
+        }
+        return $cameraIds;
     }
 
-    private function WriteEvidenceActiveJobs(array $jobs): void
+    private function GetActiveEvidenceJobsFromVariables(): array
     {
-        $encoded = json_encode($jobs);
-        $this->WriteAttributeString('EvidenceActiveJobs', $encoded === false ? '{}' : $encoded);
+        $jobs = [];
+        $serviceUrl = rtrim(trim($this->ReadPropertyString('EvidenceServiceURL')), '/');
+
+        foreach ($this->GetEvidenceCameraIds() as $cameraId) {
+            $status = strtolower(trim($this->GetEvidenceStringVariableValue($cameraId, 'Evidence Status')));
+            if (!in_array($status, ['accepted', 'waiting', 'running'], true)) {
+                continue;
+            }
+
+            $jobId = trim($this->GetEvidenceStringVariableValue($cameraId, 'Evidence Job ID'));
+            $statusUrl = trim($this->GetEvidenceStringVariableValue($cameraId, 'Evidence Status URL'));
+            if ($jobId === '' || $statusUrl === '') {
+                continue;
+            }
+
+            $jobs[(string) $cameraId] = [
+                'job'        => $jobId,
+                'statusUrl'  => $statusUrl,
+                'serviceUrl' => $serviceUrl
+            ];
+        }
+
+        return $jobs;
+    }
+
+    private function GetEvidenceStringVariableValue(int $cameraId, string $name): string
+    {
+        $variableId = @IPS_GetVariableIDByName($name, $cameraId);
+        if ($variableId === false) {
+            return '';
+        }
+
+        $variable = IPS_GetVariable($variableId);
+        if ((int) ($variable['VariableType'] ?? -1) !== 3) {
+            return '';
+        }
+
+        return trim((string) GetValueString($variableId));
+    }
+
+    private function ReadEvidenceTrackingState(): array
+    {
+        $state = json_decode($this->GetBuffer('EvidenceTrackingState'), true);
+        return is_array($state) ? $state : [];
+    }
+
+    private function WriteEvidenceTrackingState(array $state): void
+    {
+        $encoded = json_encode($state);
+        $this->SetBuffer('EvidenceTrackingState', $encoded === false ? '{}' : $encoded);
+    }
+
+    private function SetEvidenceTrackingState(int $cameraId, array $entry): void
+    {
+        $semaphore = 'HikvisionEvidenceStatus_' . $this->InstanceID;
+        if (!IPS_SemaphoreEnter($semaphore, 2000)) {
+            return;
+        }
+
+        try {
+            $state = $this->ReadEvidenceTrackingState();
+            $state[(string) $cameraId] = $entry;
+            $this->WriteEvidenceTrackingState($state);
+        } finally {
+            IPS_SemaphoreLeave($semaphore);
+        }
+    }
+
+    private function RemoveEvidenceTrackingState(int $cameraId): void
+    {
+        $semaphore = 'HikvisionEvidenceStatus_' . $this->InstanceID;
+        if (!IPS_SemaphoreEnter($semaphore, 2000)) {
+            return;
+        }
+
+        try {
+            $state = $this->ReadEvidenceTrackingState();
+            unset($state[(string) $cameraId]);
+            $this->WriteEvidenceTrackingState($state);
+        } finally {
+            IPS_SemaphoreLeave($semaphore);
+        }
     }
 
     private function RefreshEvidencePollingTimer(): void
     {
-        if (!$this->ReadPropertyBoolean('EnableEvidenceRecording')) {
-            $this->SetTimerInterval('EvidenceStatusPoll', 0);
+        $active = $this->ReadPropertyBoolean('EnableEvidenceRecording') && count($this->GetActiveEvidenceJobsFromVariables()) > 0;
+        $this->SetEvidencePollScriptTimer($active ? 10 : 0);
+    }
+
+    private function SetEvidencePollScriptTimer(int $seconds): void
+    {
+        $scriptId = $this->FindEvidencePollScript();
+        if ($seconds <= 0) {
+            if ($scriptId !== null) {
+                IPS_SetScriptTimer($scriptId, 0);
+            }
             return;
         }
 
-        $jobs = $this->ReadEvidenceActiveJobs();
-        $this->SetTimerInterval('EvidenceStatusPoll', count($jobs) > 0 ? 10000 : 0);
+        if ($scriptId === null) {
+            $scriptId = $this->CreateEvidencePollScript();
+        } else {
+            $this->UpdateEvidencePollScriptContent($scriptId);
+        }
+
+        if ($scriptId !== null) {
+            IPS_SetScriptTimer($scriptId, $seconds);
+        }
+    }
+
+    private function FindEvidencePollScript(): ?int
+    {
+        $scriptId = @IPS_GetObjectIDByName('Evidence Status Poll', $this->InstanceID);
+        if ($scriptId === false) {
+            return null;
+        }
+
+        $object = IPS_GetObject($scriptId);
+        if ((int) ($object['ObjectType'] ?? -1) !== 3) {
+            $this->LogMessage('Object "Evidence Status Poll" exists below the module but is not a script.', KL_WARNING);
+            return null;
+        }
+
+        return (int) $scriptId;
+    }
+
+    private function CreateEvidencePollScript(): ?int
+    {
+        $prefix = $this->GetEvidenceModulePrefix();
+        if ($prefix === '') {
+            return null;
+        }
+
+        $scriptId = IPS_CreateScript(0);
+        IPS_SetName($scriptId, 'Evidence Status Poll');
+        IPS_SetParent($scriptId, $this->InstanceID);
+        IPS_SetHidden($scriptId, true);
+        $this->UpdateEvidencePollScriptContent($scriptId);
+        return $scriptId;
+    }
+
+    private function UpdateEvidencePollScriptContent(int $scriptId): void
+    {
+        $prefix = $this->GetEvidenceModulePrefix();
+        if ($prefix === '') {
+            return;
+        }
+
+        IPS_SetScriptContent(
+            $scriptId,
+            "<?php\n" . $prefix . '_PollEvidenceJobs(' . $this->InstanceID . ");\n"
+        );
     }
 
     private function GetEvidenceModulePrefix(): string
