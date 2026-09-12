@@ -30,14 +30,13 @@ final class HikvisionEvidenceRequestWorker
         $instanceId = (int) ($config['instanceId'] ?? 0);
         $cameraId = (int) ($config['cameraId'] ?? 0);
         $callback = (string) ($config['callback'] ?? '');
-        $trackingPrefix = self::ExtractModulePrefix($callback);
-        $beginTrackingCallback = $trackingPrefix !== '' ? $trackingPrefix . '_BeginEvidenceStatusTracking' : '';
-        $resultTrackingCallback = $trackingPrefix !== '' ? $trackingPrefix . '_TrackEvidenceRequestResult' : '';
+        $runtimeFile = __DIR__ . DIRECTORY_SEPARATOR . 'HikvisionEvidenceStatusRuntime.php';
 
-        // This runs in the isolated worker, after the alarm state and EggTimer
-        // have already been processed by the webhook path.
-        if ($beginTrackingCallback !== '' && is_callable($beginTrackingCallback)) {
-            call_user_func($beginTrackingCallback, $instanceId, $cameraId);
+        // Status tracking is initialized inside this isolated worker. Therefore
+        // the alarm/webhook path remains unchanged and never waits for status I/O.
+        if (is_file($runtimeFile)) {
+            require_once $runtimeFile;
+            HikvisionEvidenceStatusRuntime::Begin($instanceId, $cameraId);
         }
 
         $result = [
@@ -129,24 +128,20 @@ final class HikvisionEvidenceRequestWorker
                 $resultJson = '{"success":false,"message":"Unable to encode evidence worker result."}';
             }
 
+            // Preserve the existing module callback and variable contract.
             if ($callback !== '' && is_callable($callback)) {
                 call_user_func($callback, $instanceId, $cameraId, $resultJson);
             } else {
                 IPS_LogMessage('Hikvision Evidence Worker', 'Completion callback is unavailable.');
             }
 
-            if ($resultTrackingCallback !== '' && is_callable($resultTrackingCallback)) {
-                call_user_func($resultTrackingCallback, $instanceId, $cameraId, $resultJson);
+            // Add non-blocking lifecycle tracking without changing the webhook
+            // module itself. If the runtime helper is missing, legacy evidence
+            // behavior continues unchanged.
+            if (is_file($runtimeFile)) {
+                require_once $runtimeFile;
+                HikvisionEvidenceStatusRuntime::TrackRequestResult($instanceId, $cameraId, $resultJson);
             }
         }
-    }
-
-    private static function ExtractModulePrefix(string $callback): string
-    {
-        if (preg_match('/^([A-Za-z_][A-Za-z0-9_]*)_CompleteEvidenceRequest$/', $callback, $matches)) {
-            return (string) $matches[1];
-        }
-
-        return '';
     }
 }
