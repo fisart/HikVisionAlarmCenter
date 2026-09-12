@@ -30,6 +30,15 @@ final class HikvisionEvidenceRequestWorker
         $instanceId = (int) ($config['instanceId'] ?? 0);
         $cameraId = (int) ($config['cameraId'] ?? 0);
         $callback = (string) ($config['callback'] ?? '');
+        $trackingPrefix = self::ExtractModulePrefix($callback);
+        $beginTrackingCallback = $trackingPrefix !== '' ? $trackingPrefix . '_BeginEvidenceStatusTracking' : '';
+        $resultTrackingCallback = $trackingPrefix !== '' ? $trackingPrefix . '_TrackEvidenceRequestResult' : '';
+
+        // This runs in the isolated worker, after the alarm state and EggTimer
+        // have already been processed by the webhook path.
+        if ($beginTrackingCallback !== '' && is_callable($beginTrackingCallback)) {
+            call_user_func($beginTrackingCallback, $instanceId, $cameraId);
+        }
 
         $result = [
             'success' => false,
@@ -125,6 +134,19 @@ final class HikvisionEvidenceRequestWorker
             } else {
                 IPS_LogMessage('Hikvision Evidence Worker', 'Completion callback is unavailable.');
             }
+
+            if ($resultTrackingCallback !== '' && is_callable($resultTrackingCallback)) {
+                call_user_func($resultTrackingCallback, $instanceId, $cameraId, $resultJson);
+            }
         }
+    }
+
+    private static function ExtractModulePrefix(string $callback): string
+    {
+        if (preg_match('/^([A-Za-z_][A-Za-z0-9_]*)_CompleteEvidenceRequest$/', $callback, $matches)) {
+            return (string) $matches[1];
+        }
+
+        return '';
     }
 }
