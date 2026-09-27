@@ -94,12 +94,14 @@ final class HikvisionEvidenceStatusRuntime
             $status = 'accepted';
         }
 
-        self::SetEvidenceReady($cameraId, $status === 'done');
-        self::SetString($cameraId, 'Evidence Status', $status);
         self::SetString($cameraId, 'Evidence Job ID', $jobId);
         self::SetString($cameraId, 'Evidence File', (string) ($result['file'] ?? ''));
         self::SetString($cameraId, 'Evidence Status URL', $statusUrl);
         self::SetString($cameraId, 'Evidence URL', $videoUrl);
+        // Publish the status last. Module 1 reacts to "done", so the mailer
+        // must already be able to read the matching job, file, URL and Ready.
+        self::SetEvidenceReady($cameraId, $status === 'done');
+        self::SetString($cameraId, 'Evidence Status', $status);
 
         self::RefreshPollTimer($instanceId);
     }
@@ -202,9 +204,6 @@ final class HikvisionEvidenceStatusRuntime
             return;
         }
 
-        self::SetString($cameraId, 'Evidence Status', $status);
-        self::SetEvidenceReady($cameraId, $status === 'done');
-
         $file = trim((string) ($result['file'] ?? ''));
         if ($file !== '') {
             self::SetString($cameraId, 'Evidence File', $file);
@@ -215,6 +214,11 @@ final class HikvisionEvidenceStatusRuntime
         if ($videoUrl !== '') {
             self::SetString($cameraId, 'Evidence URL', $videoUrl);
         }
+
+        // A completed status is the Module 1 trigger. Write it only after
+        // the complete evidence snapshot and the Ready flag are visible.
+        self::SetEvidenceReady($cameraId, $status === 'done');
+        self::SetString($cameraId, 'Evidence Status', $status);
 
         if (($status === 'done' || $status === 'failed') && self::IsDebug($instanceId)) {
             self::Log(
