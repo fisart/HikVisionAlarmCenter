@@ -9,6 +9,33 @@ Folgende Module beinhaltet das ProcessCameraEvents Repository:
 
 The **ProcessCameraEvents** module is designed for IP-Symcon to handle motion detection events from HIKVISION cameras. When a motion event is detected by a HIKVISION camera, the camera sends an event notification to the IP-Symcon server via a webhook. This module processes these events, captures snapshots, and manages related variables and media within IP-Symcon. It also utilizes an Egg Timer to manage the duration of the motion event status.
 
+## Evidence completion and mailer handoff (2026-09-27)
+
+When evidence recording is enabled, `ProcessCameraEvents/HikvisionEvidenceStatusRuntime.php`
+publishes one camera job through the direct children `Evidence Job ID`,
+`Evidence File`, `Evidence URL`, `Evidence Ready` and `Evidence Status`.
+The `TrackRequestResult()` and `CompletePoll()` paths publish a completed
+job in this order:
+
+1. Write the current job ID and available file/URL metadata.
+2. Write `Evidence Ready = true`.
+3. Write `Evidence Status = done` **last**.
+
+`Evidence Status = done` is the Module 1 sensor edge that reaches Module 3
+and the shared MyAlarmSystem EvidenceMailer. Publishing it last prevents the
+mailer from reading a partially updated camera snapshot. A new request clears
+`Evidence Ready` before leaving the old `done` state. The status worker checks
+that the current camera job ID still matches its own job ID before publishing.
+This is an ordering contract for separate Symcon variables; it is not an
+atomic multi-variable transaction. The mailer retains a bounded 300 ms
+readiness recheck as a fallback and logs its delay if one was needed.
+
+To deploy, update the **HikVisionAlarmCenter** module from `main` in
+IP-Symcon. Updating GitHub alone does not install code in a running Symcon
+instance. Verify a completed clip, `Ready = true`, `Status = done`, exactly
+a `Queued camera job=...` in the EvidenceMailer Debug Status, and one email
+for that job/recipient. Module 3 configuration and code are unchanged.
+
 ## Features
 
 - **Webhook Integration**: Receives event notifications from HIKVISION cameras via a customizable webhook.
