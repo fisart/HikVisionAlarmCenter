@@ -1,0 +1,13 @@
+name: System Portal return navigation
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  navigation:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: PHP syntax and portal resolver regression
+        run: |
+          php -l libs/SystemPortalNavigation.php
+          php tests/system_portal_navigation.php

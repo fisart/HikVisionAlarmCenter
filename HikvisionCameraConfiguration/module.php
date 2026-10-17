@@ -1,5 +1,8 @@
 <?php
 
+require_once __DIR__ . '/../libs/SystemPortalNavigation.php';
+
+
 // Version 1.0.0
 // Standalone Hikvision linkage configuration module.
 // Keeps camera configuration traffic separate from the alarm-processing module.
@@ -907,7 +910,7 @@ class HikvisionCameraConfiguration extends IPSModule
         }
 
         $html .= '<div class="submit"><button id="submitButton" type="submit">Submit Configuration</button><div id="saveStatus"></div></div></form></body></html>';
-        return $html;
+        return AFSystemPortalNavigationV1::inject($html, (int)$this->ReadPropertyInteger('SecretsManagerInstanceID'));
     }
 
     private function GetTriggerToCapabilityMap(): array

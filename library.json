@@ -1,12 +1,12 @@
 {
-    "id": "{237825C2-6670-C9CE-25CF-913A10FA77F5}",
-    "name": "ProcessCameraEvents",
-    "author": "Artur Fischer",
-    "url": "",
-    "compatibility": {
-        "version": "7.1"
-    },
-    "version": "1.6.14",
-    "build": 0,
-    "date": 0
+  "id": "{237825C2-6670-C9CE-25CF-913A10FA77F5}",
+  "name": "ProcessCameraEvents",
+  "author": "Artur Fischer",
+  "url": "",
+  "compatibility": {
+    "version": "7.1"
+  },
+  "version": "1.6.14",
+  "build": 1,
+  "date": 1792226978
 }
